@@ -12,6 +12,7 @@ from app.models import ProgressMessage, TranscriptionMessage, ResultMessage, Err
 from app.image_gen import generate_line_art
 from app.stt import transcribe
 from app import config
+from app.device_protocol import handle_device_session
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -83,26 +84,46 @@ async def handle_audio_input(ws: WebSocket, audio_bytes: bytes):
     await handle_text_input(ws, text)
 
 
+async def _process_browser_message(ws: WebSocket, message: dict):
+    """Handle one message in the existing browser protocol."""
+    if "text" in message and message["text"] is not None:
+        try:
+            data = json.loads(message["text"])
+            parsed = TextInput(**data)
+            await handle_text_input(ws, parsed.text)
+        except (json.JSONDecodeError, ValueError) as e:
+            await send_json(ws, ErrorMessage(stage="input", message=f"Invalid message: {e}"))
+    elif "bytes" in message and message["bytes"] is not None:
+        await handle_audio_input(ws, message["bytes"])
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     logger.info("WebSocket connected")
 
     try:
+        # Peek the first message to choose protocol: a `hello` => device.
+        first = await ws.receive()
+        if first.get("type") == "websocket.disconnect":
+            return
+        if first.get("type") == "websocket.receive" and first.get("text"):
+            try:
+                parsed = json.loads(first["text"])
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("type") == "hello":
+                await handle_device_session(ws, parsed)
+                return
+        # Not a device hello: process this first message, then continue the
+        # existing browser loop.
+        await _process_browser_message(ws, first)
         while True:
             message = await ws.receive()
-
-            if message["type"] == "websocket.receive":
-                if "text" in message:
-                    try:
-                        data = json.loads(message["text"])
-                        parsed = TextInput(**data)
-                        await handle_text_input(ws, parsed.text)
-                    except (json.JSONDecodeError, ValueError) as e:
-                        await send_json(ws, ErrorMessage(stage="input", message=f"Invalid message: {e}"))
-
-                elif "bytes" in message:
-                    await handle_audio_input(ws, message["bytes"])
-
+            if message.get("type") != "websocket.receive":
+                if message.get("type") == "websocket.disconnect":
+                    break
+                continue
+            await _process_browser_message(ws, message)
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
