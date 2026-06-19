@@ -29,6 +29,7 @@ async def handle_device_session(
     logger.info("Device session %s started", session_id)
 
     listening = False
+    disconnected = False
     opus_frames: list[bytes] = []
 
     try:
@@ -36,6 +37,7 @@ async def handle_device_session(
             message = await ws.receive()
             mtype = message.get("type")
             if mtype == "websocket.disconnect":
+                disconnected = True
                 break
             if mtype != "websocket.receive":
                 continue
@@ -63,10 +65,12 @@ async def handle_device_session(
                 if listening:
                     opus_frames.append(message["bytes"])
     except WebSocketDisconnect:
-        pass
+        disconnected = True
     finally:
-        # Best-effort flush: audio buffered but never stopped.
-        if opus_frames and listening:
+        # Best-effort flush only if the loop ended WITHOUT a device disconnect.
+        # On a real disconnect the socket is gone, so generating an image we can
+        # never deliver would waste a full (cold ~minutes) ComfyUI run.
+        if opus_frames and listening and not disconnected:
             try:
                 await _run_line_art(
                     ws, session_id, opus_frames, transcribe, generate_line_art, decode,

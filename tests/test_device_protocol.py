@@ -118,16 +118,18 @@ async def test_empty_transcript_emits_error_not_line_art():
 
 
 @pytest.mark.asyncio
-async def test_disconnect_mid_listen_flushes():
-    """Disconnect while listening (no listen stop) should flush buffered audio."""
+async def test_disconnect_mid_listen_does_not_generate():
+    """Disconnect while listening (no listen stop) must NOT run generation:
+    the socket is gone, so an image could never be delivered. We skip the
+    flush to avoid wasting a full (cold ~minutes) ComfyUI run."""
     async def fake_transcribe(wav_bytes):
-        return "a cat"
+        raise AssertionError("transcribe must not run after a device disconnect")
 
     async def fake_generate(subject):
-        return ("data:image/png;base64,AAA", f"prompt {subject}", "cmF3", 240)
+        raise AssertionError("generate must not run after a device disconnect")
 
     def fake_decode(frames, sample_rate=16000):
-        return b"RIFF"
+        raise AssertionError("decode must not run after a device disconnect")
 
     events = [
         _text({"type": "listen", "state": "start", "mode": "auto"}),
@@ -143,8 +145,9 @@ async def test_disconnect_mid_listen_flushes():
         decode=fake_decode,
     )
 
+    # Only the hello reply should have been sent; no pipeline ran.
     types = [m["type"] for m in ws.sent]
-    assert "line_art" in types, f"expected line_art in {types}"
+    assert types == ["hello"], f"expected only hello, got {types}"
 
 
 @pytest.mark.asyncio
