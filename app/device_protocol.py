@@ -51,6 +51,8 @@ async def handle_device_session(
                         listening = True
                         opus_frames = []
                     elif state == "stop":
+                        if not listening:
+                            continue
                         listening = False
                         await _run_line_art(
                             ws, session_id, opus_frames, transcribe, generate_line_art, decode,

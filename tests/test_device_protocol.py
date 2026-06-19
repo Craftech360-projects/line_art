@@ -113,6 +113,38 @@ async def test_empty_transcript_emits_error_not_line_art():
     types = [m["type"] for m in ws.sent]
     assert "line_art_error" in types
     assert "line_art" not in types
+    err = next(m for m in ws.sent if m["type"] == "line_art_error")
+    assert err["stage"] == "stt"
+
+
+@pytest.mark.asyncio
+async def test_disconnect_mid_listen_flushes():
+    """Disconnect while listening (no listen stop) should flush buffered audio."""
+    async def fake_transcribe(wav_bytes):
+        return "a cat"
+
+    async def fake_generate(subject):
+        return ("data:image/png;base64,AAA", f"prompt {subject}", "cmF3", 240)
+
+    def fake_decode(frames, sample_rate=16000):
+        return b"RIFF"
+
+    events = [
+        _text({"type": "listen", "state": "start", "mode": "auto"}),
+        _bytes(b"opus1"),
+        _bytes(b"opus2"),
+        {"type": "websocket.disconnect"},
+    ]
+    ws = FakeWS(events)
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello"},
+        transcribe=fake_transcribe,
+        generate_line_art=fake_generate,
+        decode=fake_decode,
+    )
+
+    types = [m["type"] for m in ws.sent]
+    assert "line_art" in types, f"expected line_art in {types}"
 
 
 @pytest.mark.asyncio
