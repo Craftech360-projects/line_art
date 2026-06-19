@@ -13,6 +13,15 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _frame_to_int16(frame) -> "np.ndarray":
+    """Flatten a decoded AudioFrame to int16 PCM, scaling float formats."""
+    arr = frame.to_ndarray().reshape(-1)
+    if np.issubdtype(arr.dtype, np.floating):
+        # float samples are in [-1.0, 1.0]; scale to int16 range.
+        return (np.clip(arr, -1.0, 1.0) * 32767.0).astype(np.int16)
+    return arr.astype(np.int16)
+
+
 def decode_opus_to_wav(frames: list[bytes], sample_rate: int = 16000) -> bytes:
     """Decode raw Opus packets to a mono PCM16 WAV (bytes)."""
     decoder = av.CodecContext.create("libopus", "r")
@@ -20,13 +29,17 @@ def decode_opus_to_wav(frames: list[bytes], sample_rate: int = 16000) -> bytes:
     decoder.format = "s16"
     decoder.layout = "mono"
 
+    # The decoder is configured for s16 above; PyAV 17 on this platform emits
+    # int16 frames (verified). If a future PyAV build decoded libopus to float
+    # planar instead, frames would be fltp and the astype(int16) below would
+    # clip near-silent — guard against that by checking the frame dtype.
     chunks = []
     for raw in frames:
         packet = av.packet.Packet(raw)
         for frame in decoder.decode(packet):
-            chunks.append(frame.to_ndarray().reshape(-1))
+            chunks.append(_frame_to_int16(frame))
     for frame in decoder.decode(None):  # flush decoder
-        chunks.append(frame.to_ndarray().reshape(-1))
+        chunks.append(_frame_to_int16(frame))
 
     if not chunks:
         raise ValueError("no audio decoded from opus frames")
