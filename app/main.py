@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -12,18 +11,20 @@ from fastapi.staticfiles import StaticFiles
 from app.models import ProgressMessage, TranscriptionMessage, ResultMessage, ErrorMessage, TextInput
 from app.image_gen import generate_line_art
 from app.stt import transcribe
+from app import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-HF_TOKEN = os.environ.get("HF_TOKEN")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not os.environ.get("GROQ_API_KEY"):
-        logger.warning("GROQ_API_KEY not set. Audio transcription will fail.")
-    logger.info("Server ready. Using Groq Whisper API for STT.")
+    logger.info(
+        "Server ready (offline). STT=Speaches@%s model=%s | ImageGen=ComfyUI@%s",
+        config.SPEACHES_BASE_URL,
+        config.SPEACHES_MODEL,
+        config.COMFYUI_BASE_URL,
+    )
     yield
 
 
@@ -46,7 +47,7 @@ async def handle_text_input(ws: WebSocket, subject: str):
     await send_json(ws, ProgressMessage(stage="generating", message=f"Generating line art for '{subject}'..."))
 
     try:
-        image_data_uri, prompt_used, raw_mono, height = await generate_line_art(subject, HF_TOKEN)
+        image_data_uri, prompt_used, raw_mono, height = await generate_line_art(subject)
         raw_size = len(raw_mono) * 3 // 4  # approx decoded size
         logger.info("Image generated: 384x%d, raw mono ~%d bytes", height, raw_size)
         await send_json(ws, ResultMessage(image=image_data_uri, prompt_used=prompt_used, raw_mono=raw_mono, height=height))
