@@ -2,8 +2,9 @@ import base64
 import io
 import logging
 
-import httpx
 from PIL import Image
+
+from app import comfy_client
 
 logger = logging.getLogger(__name__)
 
@@ -12,22 +13,11 @@ PROMPT_TEMPLATE = (
     "minimal style, clean lines, white background, no shading, outline only"
 )
 
-HF_API_URL = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
 TARGET_WIDTH = 384
 
 
 def build_prompt(subject: str) -> str:
     return PROMPT_TEMPLATE.format(subject=subject.strip())
-
-
-async def generate_with_huggingface(prompt: str, api_token: str | None = None) -> bytes:
-    headers = {}
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(HF_API_URL, headers=headers, json={"inputs": prompt})
-        resp.raise_for_status()
-        return resp.content
 
 
 def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
@@ -74,14 +64,13 @@ def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
     return png_bytes, bytes(raw)
 
 
-async def generate_line_art(subject: str, hf_token: str | None = None) -> tuple[str, str, str, int]:
-    """Generate line art image.
+async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
+    """Generate line art via local ComfyUI.
 
     Returns (base64_image_uri, prompt_used, base64_raw_mono, height).
     """
     prompt = build_prompt(subject)
-
-    image_bytes = await generate_with_huggingface(prompt, hf_token)
+    image_bytes = await comfy_client.generate_png(prompt)
 
     png_bytes, raw_bytes = to_raw_mono(image_bytes)
     image_b64 = base64.b64encode(png_bytes).decode()
