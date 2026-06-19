@@ -9,55 +9,143 @@ Device/Browser                          Server (this project)
      |                                       |
      |── ws://SERVER_IP:8000/ws ────────────>|
      |                                       |
-     |── audio (binary frame) ─────────────>|── Groq Whisper API (STT)
-     |   OR text (JSON frame)                |── HuggingFace FLUX.1 (image gen)
+     |── audio (binary frame) ─────────────>|── Speaches (Docker :8001) for STT
+     |   OR text (JSON frame)                |── ComfyUI (native Windows :8188) for image gen
      |                                       |── Pillow (resize + 1-bit convert)
      |                                       |
      |<──── JSON: transcription + image ─────|
      |                                       |
 ```
 
-## Prerequisites
+## Fully Offline Setup
 
-- Python 3.12+
-- A [HuggingFace API token](https://huggingface.co/settings/tokens) with "Inference Providers" permission
-- A [Groq API key](https://console.groq.com/keys) (free tier)
+All AI processing runs locally — no cloud API keys required.
 
-## Setup
+### Architecture
+
+```
+FastAPI app (:8000)
+    ├── Speaches (Docker)   :8001  — speech-to-text  (Whisper large-v3)
+    └── ComfyUI (native)    :8188  — image generation (FLUX.1-schnell fp8)
+```
+
+The app boots even if Speaches or ComfyUI are not yet running. Requests that need those services return a clear error message until they are up.
+
+---
+
+### 1. Speaches (Speech-to-Text)
+
+Speaches runs in Docker and exposes an OpenAI-compatible `/v1/audio/transcriptions` endpoint.
+
+**Requirements:** Docker Desktop with NVIDIA GPU support (NVIDIA Container Toolkit).
+
+**Start the container:**
 
 ```bash
-cd C:\Users\Acer\line_art
+docker compose up -d speaches
+```
 
-# Create virtual environment (skip if env/ already exists)
-python -m venv env
+**Pull the Whisper model once** (the container must be running):
 
-# Activate
-env\Scripts\activate
+```bash
+curl -X POST "http://localhost:8001/v1/models/Systran/faster-whisper-large-v3"
+```
 
-# Install dependencies
+Alternatively, open the Speaches UI at `http://localhost:8001` and download the model from there.
+
+**Verify:**
+
+```bash
+curl http://localhost:8001/v1/models
+```
+
+You should see `Systran/faster-whisper-large-v3` listed.
+
+---
+
+### 2. ComfyUI (Image Generation) — Native Windows
+
+ComfyUI runs natively on Windows (not in Docker) and exposes a REST/WebSocket API.
+
+**Install ComfyUI:**
+
+Download the portable build from https://github.com/comfyanonymous/ComfyUI/releases and follow its README to set it up.
+
+**Download the model checkpoint:**
+
+Download `flux1-schnell-fp8.safetensors` (search for it on the model hub of your choice, e.g. the `city96/FLUX.1-schnell-gguf` repo or the official `black-forest-labs/FLUX.1-schnell` repo) and place it at:
+
+```
+ComfyUI/models/checkpoints/flux1-schnell-fp8.safetensors
+```
+
+The filename must be exactly `flux1-schnell-fp8.safetensors`.
+
+**Start ComfyUI:**
+
+```bash
+python main.py --listen 0.0.0.0 --port 8188
+```
+
+Or, if using the portable build with an NVIDIA GPU:
+
+```bash
+run_nvidia_gpu.bat
+```
+
+**Verify:**
+
+Open `http://localhost:8188` in a browser — you should see the ComfyUI interface.
+
+---
+
+### 3. App
+
+**Install dependencies:**
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Running the Server
+**Configure environment:**
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0
+copy .env.example .env
 ```
 
-The server starts on port 8000 and listens on all network interfaces.
+The defaults in `.env.example` already point at the local services:
 
-### Verify
+```
+SPEACHES_BASE_URL=http://localhost:8001
+SPEACHES_MODEL=Systran/faster-whisper-large-v3
+COMFYUI_BASE_URL=http://localhost:8188
+```
 
-- Server logs should show: `Server ready. Using Groq Whisper API for STT.`
-- Open `http://127.0.0.1:8000/static/index.html` in a browser to test
+No API keys are needed.
 
-### Find Your Server IP
+**Start the server:**
 
 ```bash
-ipconfig
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Look for `IPv4 Address` under `Wireless LAN adapter Wi-Fi` (e.g., `192.168.1.168`).
+**Open the test client:**
+
+`http://127.0.0.1:8000/static/index.html`
+
+---
+
+### 4. Startup Order
+
+Start Speaches and ComfyUI **before** the app for a smooth first request, but it is not required — the app will start regardless and return clear errors for any request that arrives before the services are ready.
+
+Recommended order:
+
+1. `docker compose up -d speaches`
+2. Start ComfyUI (`python main.py --listen 0.0.0.0 --port 8188` or `run_nvidia_gpu.bat`)
+3. `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+
+---
 
 ## Device Connection
 
@@ -70,6 +158,16 @@ ws://<SERVER_IP>:8000/ws
 Example: `ws://192.168.1.168:8000/ws`
 
 No authentication required. The device and server must be on the same network.
+
+### Find Your Server IP
+
+```bash
+ipconfig
+```
+
+Look for `IPv4 Address` under `Wireless LAN adapter Wi-Fi` (e.g., `192.168.1.168`).
+
+---
 
 ## WebSocket Protocol
 
@@ -150,32 +248,6 @@ uint8_t byte = raw_data[y * 48 + x / 8];
 bool is_black = (byte >> (7 - (x % 8))) & 1;
 ```
 
-## Project Structure
-
-```
-line_art/
-├── app/
-│   ├── __init__.py
-│   ├── main.py          # FastAPI app, WebSocket endpoint
-│   ├── stt.py           # Groq Whisper API for speech-to-text
-│   ├── image_gen.py     # HuggingFace FLUX.1 + 1-bit conversion
-│   └── models.py        # Pydantic message schemas
-├── static/
-│   └── index.html       # Browser test client
-├── requirements.txt
-└── README.md
-```
-
-## Server-Side APIs
-
-These are called by the server only. The device does NOT need any API keys.
-
-| Service         | Provider                          | Purpose                    |
-|-----------------|-----------------------------------|----------------------------|
-| Speech-to-Text  | Groq (`whisper-large-v3`)         | Transcribes audio to text  |
-| Image Generation| HuggingFace (`FLUX.1-schnell`)    | Generates line art from text|
-| Image Conversion| Local (Pillow)                    | Resizes + converts to 1-bit|
-
 ## Message Flow
 
 ```
@@ -203,3 +275,33 @@ DEVICE                                SERVER
   |  [render 1-bit bitmap on display]    |
   |                                      |
 ```
+
+## Project Structure
+
+```
+line_art/
+├── app/
+│   ├── __init__.py
+│   ├── main.py             # FastAPI app, WebSocket endpoint
+│   ├── config.py           # Env var config (Speaches + ComfyUI URLs)
+│   ├── stt.py              # Speaches Whisper API for speech-to-text
+│   ├── image_gen.py        # ComfyUI FLUX.1-schnell + 1-bit conversion
+│   ├── comfy_workflow.py   # Builds the ComfyUI prompt graph
+│   └── models.py           # Pydantic message schemas
+├── static/
+│   └── index.html          # Browser test client
+├── docker-compose.yml      # Speaches service definition
+├── .env.example            # Environment variable template
+├── requirements.txt
+└── README.md
+```
+
+## Server-Side Services
+
+These are called by the server only. The device does NOT need any API keys.
+
+| Service         | Provider                                   | Purpose                     |
+|-----------------|--------------------------------------------|-----------------------------|
+| Speech-to-Text  | Speaches (Docker :8001, Whisper large-v3)  | Transcribes audio to text   |
+| Image Generation| ComfyUI (native :8188, FLUX.1-schnell fp8) | Generates line art from text|
+| Image Conversion| Local (Pillow)                             | Resizes + converts to 1-bit |
