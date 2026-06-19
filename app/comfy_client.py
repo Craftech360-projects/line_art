@@ -27,7 +27,11 @@ async def generate_png(
 
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=timeout_s)
+        # Per-request timeout is capped well below the whole-workflow budget so a
+        # single slow /history or /view poll raises ReadTimeout promptly instead
+        # of consuming the entire timeout_s. The overall bound is enforced by the
+        # deadline loop below, not by the client's per-request timeout.
+        client = httpx.AsyncClient(timeout=min(30.0, timeout_s))
     try:
         try:
             resp = await client.post(
