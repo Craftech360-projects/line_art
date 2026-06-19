@@ -1,0 +1,19 @@
+services:
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    container_name: speaches
+    restart: unless-stopped
+    ports:
+      - "8001:8000"   # host 8001 -> container 8000 (avoids FastAPI's 8000)
+    volumes:
+      - speaches-hub:/home/ubuntu/.cache/huggingface/hub
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  speaches-hub:
