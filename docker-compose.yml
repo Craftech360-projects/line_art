@@ -6,7 +6,32 @@ services:
     ports:
       - "8001:8000"   # host 8001 -> container 8000 (avoids FastAPI's 8000)
     volumes:
-      - speaches-hub:/home/ubuntu/.cache/huggingface/hub
+      # Reuse the pre-existing HF hub cache (already holds faster-whisper-large-v3),
+      # so the model is not re-downloaded. Declared external; create it manually with
+      # `docker volume create hf-hub-cache` on a fresh machine.
+      - hf-hub-cache:/home/ubuntu/.cache/huggingface/hub
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  comfyui:
+    build:
+      context: .
+      dockerfile: comfyui.Dockerfile
+    image: lineart-comfyui:local
+    container_name: comfyui
+    restart: unless-stopped
+    ports:
+      - "8188:8188"   # ComfyUI HTTP API + UI
+    volumes:
+      # Host bind mounts work because this image runs as root (no UID enforcement).
+      # Place flux1-schnell-fp8.safetensors in comfyui-data/basedir/models/checkpoints/.
+      - /c/Users/PC/Desktop/comfyui-data/basedir/models:/ComfyUI/models
+      - /c/Users/PC/Desktop/comfyui-data/basedir/output:/ComfyUI/output
     deploy:
       resources:
         reservations:
@@ -16,4 +41,5 @@ services:
               capabilities: [gpu]
 
 volumes:
-  speaches-hub:
+  hf-hub-cache:
+    external: true

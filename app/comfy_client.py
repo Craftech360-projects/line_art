@@ -17,7 +17,7 @@ async def generate_png(
     *,
     client: httpx.AsyncClient | None = None,
     poll_interval: float = 0.5,
-    timeout_s: float = 120.0,
+    timeout_s: float = 600.0,
     now=time.monotonic,
     sleep=asyncio.sleep,
 ) -> bytes:
