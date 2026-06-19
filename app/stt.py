@@ -1,27 +1,30 @@
 import logging
-import os
 
 import httpx
 
+from app import config
+
 logger = logging.getLogger(__name__)
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-
-async def transcribe(audio_bytes: bytes) -> str:
-    """Transcribe audio bytes to text using Groq Whisper API."""
-    if not GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY not set")
-
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+async def transcribe(audio_bytes: bytes, client: httpx.AsyncClient | None = None) -> str:
+    """Transcribe audio bytes to text using the local Speaches server."""
+    url = f"{config.SPEACHES_BASE_URL}/v1/audio/transcriptions"
     files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-    data = {"model": "whisper-large-v3", "response_format": "json"}
+    data = {"model": config.SPEACHES_MODEL, "response_format": "json"}
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(GROQ_API_URL, headers=headers, files=files, data=data)
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(timeout=30.0)
+    try:
+        resp = await client.post(url, files=files, data=data)
         resp.raise_for_status()
         result = resp.json()
         text = result.get("text", "").strip()
-        logger.info("Groq transcription: '%s'", text)
+        logger.info("Speaches transcription: '%s'", text)
         return text
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        raise RuntimeError(f"Speaches unavailable at {config.SPEACHES_BASE_URL}: {e}") from e
+    finally:
+        if owns_client:
+            await client.aclose()
