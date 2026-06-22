@@ -31,6 +31,14 @@ def _bytes(b):
     return {"type": "websocket.receive", "bytes": b}
 
 
+def _confirm():
+    return _text({"type": "print_confirm"})
+
+
+def _reject():
+    return _text({"type": "print_reject"})
+
+
 @pytest.mark.asyncio
 async def test_hello_reply_sent_first():
     ws = FakeWS([])  # no further events; disconnect immediately after hello
@@ -40,56 +48,6 @@ async def test_hello_reply_sent_first():
     assert ws.sent[0]["type"] == "hello"
     assert ws.sent[0]["transport"] == "websocket"
     assert "session_id" in ws.sent[0]
-
-
-@pytest.mark.asyncio
-async def test_full_listen_cycle_emits_line_art_sequence():
-    captured = {}
-
-    async def fake_transcribe(wav_bytes):
-        captured["wav"] = wav_bytes
-        return "a cat"
-
-    async def fake_generate(subject):
-        captured["subject"] = subject
-        return ("data:image/png;base64,AAA", f"prompt {subject}", "cmF3bW9ubw==", 240)
-
-    def fake_decode(frames, sample_rate=16000):
-        captured["frames"] = list(frames)
-        return b"RIFFfakewav"
-
-    events = [
-        _text({"type": "listen", "state": "start", "mode": "auto"}),
-        _bytes(b"opus1"),
-        _bytes(b"opus2"),
-        _text({"type": "listen", "state": "stop"}),
-    ]
-    ws = FakeWS(events)
-    hello = {"type": "hello", "transport": "websocket"}
-    await device_protocol.handle_device_session(
-        ws, hello, transcribe=fake_transcribe, generate_line_art=fake_generate, decode=fake_decode,
-    )
-
-    types = [m["type"] for m in ws.sent]
-    assert types[0] == "hello"
-    assert "line_art_transcription" in types
-    assert "line_art_progress" in types
-    assert "line_art" in types
-    # Order: transcription before progress before final line_art.
-    assert types.index("line_art_transcription") < types.index("line_art_progress") < types.index("line_art")
-
-    # Opus frames were collected and decoded; transcript drove generation.
-    assert captured["frames"] == [b"opus1", b"opus2"]
-    assert captured["wav"] == b"RIFFfakewav"
-    assert captured["subject"] == "a cat"
-
-    final = next(m for m in ws.sent if m["type"] == "line_art")
-    assert final["raw_mono"] == "cmF3bW9ubw=="
-    assert final["width"] == 384
-    assert final["height"] == 240
-    # session_id echoed on every non-hello message.
-    sid = ws.sent[0]["session_id"]
-    assert all(m.get("session_id") == sid for m in ws.sent[1:])
 
 
 @pytest.mark.asyncio
@@ -162,6 +120,7 @@ async def test_generate_failure_emits_error():
         _text({"type": "listen", "state": "start"}),
         _bytes(b"x"),
         _text({"type": "listen", "state": "stop"}),
+        _text({"type": "print_confirm"}),
     ]
     ws = FakeWS(events)
     await device_protocol.handle_device_session(
@@ -171,3 +130,139 @@ async def test_generate_failure_emits_error():
     err = next(m for m in ws.sent if m["type"] == "line_art_error")
     assert "ComfyUI unavailable" in err["message"]
     assert err["stage"] == "image_gen"
+
+
+@pytest.mark.asyncio
+async def test_transcription_waits_for_confirm_then_generates():
+    captured = {}
+
+    async def fake_transcribe(wav):
+        return "a cat"
+
+    async def fake_generate(subject):
+        captured["subject"] = subject
+        return ("data:image/png;base64,AAA", f"prompt {subject}", "cmF3bW9ubw==", 240)
+
+    def fake_decode(frames, sample_rate=16000):
+        return b"RIFF"
+
+    events = [
+        _text({"type": "listen", "state": "start"}),
+        _bytes(b"op"),
+        _text({"type": "listen", "state": "stop"}),
+        _confirm(),
+    ]
+    ws = FakeWS(events)
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello"},
+        transcribe=fake_transcribe, generate_line_art=fake_generate, decode=fake_decode,
+    )
+    types = [m["type"] for m in ws.sent]
+    # transcription is sent and comes before any generation output
+    assert "line_art_transcription" in types
+    assert "line_art" in types
+    assert types.index("line_art_transcription") < types.index("line_art_progress") < types.index("line_art")
+    assert captured["subject"] == "a cat"
+    final = next(m for m in ws.sent if m["type"] == "line_art")
+    assert final["raw_mono"] == "cmF3bW9ubw==" and final["width"] == 384 and final["height"] == 240
+
+
+@pytest.mark.asyncio
+async def test_transcription_alone_does_not_generate():
+    # listen-stop produces a transcription but NO confirm arrives -> no generation.
+    async def fake_transcribe(wav):
+        return "a cat"
+
+    async def fake_generate(subject):
+        raise AssertionError("generate must not run before print_confirm")
+
+    events = [
+        _text({"type": "listen", "state": "start"}),
+        _bytes(b"op"),
+        _text({"type": "listen", "state": "stop"}),
+        # no confirm -> session ends
+    ]
+    ws = FakeWS(events)
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello"},
+        transcribe=fake_transcribe, generate_line_art=fake_generate,
+        decode=lambda f, sample_rate=16000: b"RIFF",
+    )
+    types = [m["type"] for m in ws.sent]
+    assert "line_art_transcription" in types
+    assert "line_art" not in types
+    assert "line_art_progress" not in types
+
+
+@pytest.mark.asyncio
+async def test_reject_sends_nothing_and_does_not_generate():
+    async def fake_transcribe(wav):
+        return "a cat"
+
+    async def fake_generate(subject):
+        raise AssertionError("generate must not run on print_reject")
+
+    events = [
+        _text({"type": "listen", "state": "start"}),
+        _bytes(b"op"),
+        _text({"type": "listen", "state": "stop"}),
+        _reject(),
+    ]
+    ws = FakeWS(events)
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello"},
+        transcribe=fake_transcribe, generate_line_art=fake_generate,
+        decode=lambda f, sample_rate=16000: b"RIFF",
+    )
+    types = [m["type"] for m in ws.sent]
+    assert "line_art_transcription" in types
+    assert "line_art" not in types
+    assert "line_art_progress" not in types
+    assert "line_art_error" not in types
+
+
+@pytest.mark.asyncio
+async def test_new_audio_voids_pending_then_confirm_uses_new_text():
+    texts = iter(["old fox", "new owl"])
+
+    async def fake_transcribe(wav):
+        return next(texts)
+
+    seen = {}
+
+    async def fake_generate(subject):
+        seen["subject"] = subject
+        return ("data:image/png;base64,AAA", "p", "cmF3", 240)
+
+    events = [
+        _text({"type": "listen", "state": "start"}),   # first utterance
+        _bytes(b"op"),
+        _text({"type": "listen", "state": "stop"}),     # -> transcribe "old fox"
+        _text({"type": "listen", "state": "start"}),     # NEW audio voids "old fox"
+        _bytes(b"op2"),
+        _text({"type": "listen", "state": "stop"}),      # -> transcribe "new owl"
+        _confirm(),                                       # confirm -> generate "new owl"
+    ]
+    ws = FakeWS(events)
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello"},
+        transcribe=fake_transcribe, generate_line_art=fake_generate,
+        decode=lambda f, sample_rate=16000: b"RIFF",
+    )
+    assert seen["subject"] == "new owl"
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_no_pending_is_ignored():
+    async def fake_generate(subject):
+        raise AssertionError("generate must not run with no pending transcription")
+
+    events = [_confirm()]   # confirm with nothing pending
+    ws = FakeWS(events)
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello"},
+        transcribe=lambda w: "x", generate_line_art=fake_generate,
+        decode=lambda f, sample_rate=16000: b"RIFF",
+    )
+    # only the hello reply was sent
+    assert [m["type"] for m in ws.sent] == ["hello"]
