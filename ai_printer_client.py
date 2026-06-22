@@ -17,7 +17,7 @@ the reference opuslib client use. Mic capture uses sounddevice.
 Usage:
   python ai_printer_client.py                 # interactive: Enter to talk, Enter to stop
   python ai_printer_client.py --wav speech.wav  # send a WAV file instead of the mic
-  python ai_printer_client.py --url ws://192.168.0.181:8090/ws
+  python ai_printer_client.py --url ws://192.168.0.186:8090/ws
 """
 import argparse
 import asyncio
@@ -175,7 +175,7 @@ async def run(url: str, wav: str | None, out: str):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="AI Printer device test client (WebSocket)")
-    ap.add_argument("--url", default="ws://localhost:8090/ws")
+    ap.add_argument("--url", default="ws://192.168.0.186:8090/ws")
     ap.add_argument("--wav", default=None, help="send a WAV file instead of mic capture")
     ap.add_argument("--out", default="printed.png", help="where to save the printed bitmap")
     args = ap.parse_args()

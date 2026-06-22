@@ -1,307 +1,273 @@
-# Line Art Generator API
+# AI Printer — Line Art Generator
 
-WebSocket API that accepts audio or text input, generates a line art image using AI, and returns a raw 1-bit monochrome bitmap ready for embedded displays.
+A **fully offline** WebSocket server that turns voice or text into a 1-bit
+line-art bitmap, ready to print on the Cheeko "AI Printer" device (an ESP32
+thermal/e-ink printer) or to render in a browser.
 
-## How It Works
-
-```
-Device/Browser                          Server (this project)
-     |                                       |
-     |── ws://SERVER_IP:8000/ws ────────────>|
-     |                                       |
-     |── audio (binary frame) ─────────────>|── Speaches (Docker :8001) for STT
-     |   OR text (JSON frame)                |── ComfyUI (native Windows :8188) for image gen
-     |                                       |── Pillow (resize + 1-bit convert)
-     |                                       |
-     |<──── JSON: transcription + image ─────|
-     |                                       |
-```
-
-## Fully Offline Setup
-
-All AI processing runs locally — no cloud API keys required.
-
-### Architecture
+Speech-to-text and image generation both run **locally** — no cloud, no API keys.
 
 ```
-FastAPI app (:8000)
-    ├── Speaches (Docker)   :8001  — speech-to-text  (Whisper large-v3)
-    └── ComfyUI (native)    :8188  — image generation (FLUX.1-schnell fp8)
+voice / text  ──►  Whisper (STT)  ──►  FLUX.1-schnell (image)  ──►  1-bit bitmap  ──►  device prints it
 ```
 
-The app boots even if Speaches or ComfyUI are not yet running. Requests that need those services return a clear error message until they are up.
+## What it does
+
+- Accepts **two protocols on one `/ws` endpoint**, auto-detected by the first message:
+  - **Device protocol** (Cheeko firmware): `hello` handshake + raw Opus audio + `line_art_*` print messages.
+  - **Browser protocol** (the bundled test page): `text_input` JSON or raw WAV bytes.
+- Transcribes speech with a **local Speaches** (Whisper) container.
+- Generates line art with a **local ComfyUI** running **FLUX.1-schnell fp8** on the GPU.
+- Converts the result to the device's **1-bit, 384-px-wide** packed bitmap and streams it back.
 
 ---
 
-### 1. Speaches (Speech-to-Text)
+## Architecture
 
-Speaches runs in Docker and exposes an OpenAI-compatible `/v1/audio/transcriptions` endpoint.
+```
+                     FastAPI app  (:8090)
+   device / browser   ┌───────────────────────────┐
+   ──── ws /ws ──────►│  app/main.py  → /ws router │
+                      │   ├─ device_protocol.py    │──► Speaches (Docker :8001)  STT  (faster-whisper-large-v3)
+                      │   └─ browser handlers      │──► ComfyUI  (Docker :8188)  IMG  (FLUX.1-schnell fp8, GPU)
+                      └───────────────────────────┘──► Pillow: resize 384 + 1-bit threshold
+```
 
-**Requirements:** Docker Desktop with NVIDIA GPU support (NVIDIA Container Toolkit).
+| Service | Where | Port | Role |
+|---------|-------|------|------|
+| FastAPI app | this project | **8090** | WebSocket server (`/ws`) |
+| Speaches | Docker | 8001 → 8000 | speech-to-text (Whisper) |
+| ComfyUI | Docker (GPU) | 8188 | image generation (FLUX.1-schnell) |
 
-**Start the container:**
+> **Port note:** the app runs on **8090**, not 8000 — on the dev machine port 8000
+> is taken by another process. Change it with `--port` if you like.
+
+The app boots even if Speaches/ComfyUI are down; requests that need them return a
+clear error until they are up.
+
+---
+
+## Setup
+
+**Requirements:** Docker Desktop with NVIDIA GPU support (the RTX-class GPU is used
+for both Whisper and FLUX), Python 3.11, ~20 GB free disk for the FLUX checkpoint.
+
+### 1. Speaches (speech-to-text)
 
 ```bash
 docker compose up -d speaches
-```
-
-**Pull the Whisper model once** (the container must be running):
-
-```bash
+# pull the Whisper model once (or via the UI at http://localhost:8001):
 curl -X POST "http://localhost:8001/v1/models/Systran/faster-whisper-large-v3"
+curl http://localhost:8001/v1/models           # verify it's listed
 ```
 
-Alternatively, open the Speaches UI at `http://localhost:8001` and download the model from there.
+The model cache is a Docker volume (`hf-hub-cache`), so it survives restarts.
 
-**Verify:**
+### 2. ComfyUI (image generation)
+
+ComfyUI runs as a **local Docker image** built from `comfyui.Dockerfile` (official
+ComfyUI on a CUDA PyTorch base, run as root so Windows bind mounts work).
 
 ```bash
-curl http://localhost:8001/v1/models
+docker compose build comfyui     # first time only
+docker compose up -d comfyui
 ```
 
-You should see `Systran/faster-whisper-large-v3` listed.
-
----
-
-### 2. ComfyUI (Image Generation) — Native Windows
-
-ComfyUI runs natively on Windows (not in Docker) and exposes a REST/WebSocket API.
-
-**Install ComfyUI:**
-
-Download the portable build from https://github.com/comfyanonymous/ComfyUI/releases and follow its README to set it up.
-
-**Download the model checkpoint:**
-
-Download `flux1-schnell-fp8.safetensors` (search for it on the model hub of your choice, e.g. the `city96/FLUX.1-schnell-gguf` repo or the official `black-forest-labs/FLUX.1-schnell` repo) and place it at:
+**Download the FLUX checkpoint** (~17 GB) and place it where the container mounts
+its models — `comfyui-data/basedir/models/checkpoints/` on the host:
 
 ```
-ComfyUI/models/checkpoints/flux1-schnell-fp8.safetensors
+flux1-schnell-fp8.safetensors
 ```
 
-The filename must be exactly `flux1-schnell-fp8.safetensors`.
+Get it from the `Comfy-Org/flux1-schnell` repo (the all-in-one fp8 file that bundles
+CLIP + T5 + VAE, so `CheckpointLoaderSimple` can load it). The filename must be
+exactly `flux1-schnell-fp8.safetensors`.
 
-**Start ComfyUI:**
+Verify ComfyUI sees it:
 
 ```bash
-python main.py --listen 0.0.0.0 --port 8188
+curl http://localhost:8188/                      # UI responds
+curl http://localhost:8188/object_info/CheckpointLoaderSimple   # lists the checkpoint
 ```
 
-Or, if using the portable build with an NVIDIA GPU:
-
-```bash
-run_nvidia_gpu.bat
-```
-
-**Verify:**
-
-Open `http://localhost:8188` in a browser — you should see the ComfyUI interface.
-
----
+> **First generation is slow** (~minutes) while the 17 GB model loads into VRAM;
+> every generation after that is ~5 s. The `restart: unless-stopped` policy keeps
+> the model warm.
 
 ### 3. App
 
-**Install dependencies:**
-
 ```bash
 pip install -r requirements.txt
+copy .env.example .env            # defaults already point at the local services
+uvicorn app.main:app --host 0.0.0.0 --port 8090 --reload
 ```
 
-**Configure environment:**
+Open the browser test client at:
 
-```bash
-copy .env.example .env
-```
+- `http://localhost:8090/static/device.html` — device-protocol demo (handshake + prints the bitmap on a canvas)
+- `http://localhost:8090/static/index.html` — original text/voice client
 
-The defaults in `.env.example` already point at the local services:
+### Startup order
+
+Start Speaches + ComfyUI first, then the app. The app starts regardless and returns
+clear errors for requests that arrive before the services are ready.
+
+---
+
+## Configuration (`.env`)
 
 ```
 SPEACHES_BASE_URL=http://localhost:8001
 SPEACHES_MODEL=Systran/faster-whisper-large-v3
 COMFYUI_BASE_URL=http://localhost:8188
+
+# Optional debug / tuning:
+SAVE_DEVICE_AUDIO=1      # dump each utterance's decoded WAV to debug_audio/
+MONO_THRESHOLD=190       # 1-bit cutoff (higher = bolder lines; default 190)
 ```
 
-No API keys are needed.
-
-**Start the server:**
-
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**Open the test client:**
-
-`http://127.0.0.1:8000/static/index.html`
+The server also saves a copy of every generated image to `generated_images/`
+(both the full-colour FLUX PNG and the 1-bit mono PNG the device prints).
 
 ---
 
-### 4. Startup Order
+## Connecting the device
 
-Start Speaches and ComfyUI **before** the app for a smooth first request, but it is not required — the app will start regardless and return clear errors for any request that arrives before the services are ready.
+The Cheeko device connects to:
 
-Recommended order:
+```
+ws://<SERVER_LAN_IP>:8090/ws
+```
 
-1. `docker compose up -d speaches`
-2. Start ComfyUI (`python main.py --listen 0.0.0.0 --port 8188` or `run_nvidia_gpu.bat`)
-3. `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+Find your IP with `ipconfig` (use the Wi-Fi `IPv4 Address`, e.g. `192.168.0.186`).
+The IP is DHCP-assigned and can change — if the device stops connecting, re-check it.
+Device and server must be on the same network.
 
 ---
 
-## Device Connection
+## WebSocket protocols
 
-Devices connect to a single WebSocket endpoint:
+### A) Device protocol (Cheeko firmware)
+
+The authoritative wire contract is in [`aiprinter-server-contract.md`](aiprinter-server-contract.md).
 
 ```
-ws://<SERVER_IP>:8000/ws
+device                                  server
+  │── hello ──────────────────────────►│
+  │◄─ hello {transport:websocket,       │   (must reply < 10 s)
+  │          session_id, audio_params}  │
+  │── listen {state:start} ────────────►│
+  │── <raw Opus binary frames> ────────►│   (16 kHz mono, 60 ms, no Ogg)
+  │── listen {state:stop} ─────────────►│
+  │◄─ line_art_transcription {text} ────│
+  │◄─ line_art_progress {message,stage} │
+  │◄─ line_art {raw_mono,width,height} ─│   ◄── device prints this
 ```
 
-Example: `ws://192.168.1.168:8000/ws`
+- Errors come back as `line_art_error {message, stage}`.
+- Every server→device message echoes `session_id`.
+- Audio is **raw Opus packets** (no Ogg container). The server decodes them with
+  **opuslib** (a direct libopus binding) — **not** PyAV, whose FFmpeg wrapper forces
+  48 kHz output and corrupts the 16 kHz stream.
 
-No authentication required. The device and server must be on the same network.
+### B) Browser protocol (test client)
 
-### Find Your Server IP
+**Send:** `{"type":"text_input","text":"a cat"}` (JSON) or raw WAV bytes (binary).
 
-```bash
-ipconfig
+**Receive:**
+```json
+{"type":"progress","stage":"generating","message":"Generating line art for 'a cat'..."}
+{"type":"transcription","text":"a cat"}          // audio input only
+{"type":"result","image":"data:image/png;base64,...","prompt_used":"...",
+ "raw_mono":"<base64 1-bit bitmap>","width":384,"height":384}
+{"type":"error","stage":"image_gen","message":"..."}
 ```
-
-Look for `IPv4 Address` under `Wireless LAN adapter Wi-Fi` (e.g., `192.168.1.168`).
 
 ---
 
-## WebSocket Protocol
+## Raw bitmap format (`raw_mono`)
 
-### Sending to Server
+Base64-encoded packed 1-bit bitmap. After decoding:
 
-**Option A: Audio (binary frame)**
+| Property    | Value                              |
+|-------------|------------------------------------|
+| Width       | 384 px (always)                    |
+| Height      | variable (aspect preserved)        |
+| Depth       | 1-bit — black = 1, white = 0       |
+| Bit order   | MSB first (leftmost pixel = bit 7) |
+| Row order   | top-down                           |
+| Bytes/row   | 48 (384 / 8)                       |
+| Header/pad/compression | none                    |
 
-Send raw WAV audio as a binary WebSocket frame.
-
-| Parameter       | Value          |
-|-----------------|----------------|
-| Format          | WAV            |
-| Sample rate     | 16000 Hz       |
-| Channels        | 1 (mono)       |
-| Bit depth       | 16-bit PCM     |
-| Max size        | 10 MB          |
-
-**Option B: Text (JSON text frame)**
-
-```json
-{"type": "text_input", "text": "cat"}
-```
-
-### Receiving from Server
-
-All responses are JSON text frames. Parse the `"type"` field:
-
-**Progress (informational):**
-```json
-{"type": "progress", "stage": "stt", "message": "Transcribing audio..."}
-{"type": "progress", "stage": "generating", "message": "Generating line art for 'cat'..."}
-```
-
-**Transcription (audio input only):**
-```json
-{"type": "transcription", "text": "cat"}
-```
-
-**Result:**
-```json
-{
-  "type": "result",
-  "image": "data:image/png;base64,...",
-  "prompt_used": "simple black and white line art drawing of cat...",
-  "raw_mono": "<base64 encoded raw bitmap>",
-  "width": 384,
-  "height": 384
-}
-```
-
-**Error:**
-```json
-{"type": "error", "stage": "stt", "message": "Transcription failed: ..."}
-```
-
-## Raw Bitmap Format (`raw_mono` field)
-
-The `raw_mono` field is a base64-encoded raw 1-bit monochrome bitmap. After base64 decoding:
-
-| Property     | Value                                |
-|--------------|--------------------------------------|
-| Width        | 384 pixels (always)                  |
-| Height       | Variable (preserved aspect ratio)    |
-| Color depth  | 1-bit (black = 1, white = 0)         |
-| Bit order    | MSB first (leftmost pixel = bit 7)   |
-| Row order    | Top-down                             |
-| Bytes/row    | 48 (384 / 8)                         |
-| Padding      | None                                 |
-| Header       | None                                 |
-| Compression  | None                                 |
-
-Total size = `height * 48` bytes.
-
-### Example: Reading pixel (x, y)
+Total size = `height * 48` bytes. Reading pixel (x, y):
 
 ```c
-uint8_t byte = raw_data[y * 48 + x / 8];
+uint8_t byte = raw[y * 48 + x / 8];
 bool is_black = (byte >> (7 - (x % 8))) & 1;
 ```
 
-## Message Flow
+The 1-bit conversion uses a **brightness threshold** (`MONO_THRESHOLD`), not
+dithering — so thin line art stays solid instead of being broken into speckle.
 
-```
-DEVICE                                SERVER
-  |                                      |
-  |──── Connect ws://IP:8000/ws ───────>|
-  |                                      |
-  |──── Binary: WAV audio ────────────>|
-  |                                      |
-  |<──── {"type":"progress",             |
-  |       "stage":"stt"} ──────────────|
-  |                                      |
-  |<──── {"type":"transcription",        |
-  |       "text":"cat"} ──────────────|
-  |                                      |
-  |<──── {"type":"progress",             |
-  |       "stage":"generating"} ───────|
-  |                                      |
-  |<──── {"type":"result",               |
-  |       "raw_mono":"...",              |
-  |       "width":384,                   |
-  |       "height":384} ──────────────|
-  |                                      |
-  |  [base64 decode raw_mono]            |
-  |  [render 1-bit bitmap on display]    |
-  |                                      |
+---
+
+## Test clients
+
+| Client | Use |
+|--------|-----|
+| `ai_printer_client.py` | CLI device client — mic (`--wav file` to send a file); encodes real raw Opus, prints the bitmap to a PNG. `--url`, `--out`. |
+| `ai_printer_gui.py` | Tkinter GUI — Start/Stop recording, shows the printed bitmap. Run with the Python that has `sounddevice`. |
+| `static/device.html` | Browser device demo — handshake + canvas render (text-driven; browsers can't emit bare Opus). |
+| `device_e2e_test.py` | Device-protocol integration harness (hello → Opus → line_art). |
+| `e2e_test.py` | Browser-protocol harness (text → result). |
+| `client.py` | Reference MQTT/UDP client for the *other* Cheeko transport variant (not this server). |
+
+Quick check (server + services running):
+
+```bash
+python ai_printer_client.py --wav some_speech.wav --url ws://localhost:8090/ws
 ```
 
-## Project Structure
+---
+
+## Project structure
 
 ```
 line_art/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py             # FastAPI app, WebSocket endpoint
-│   ├── config.py           # Env var config (Speaches + ComfyUI URLs)
-│   ├── stt.py              # Speaches Whisper API for speech-to-text
-│   ├── image_gen.py        # ComfyUI FLUX.1-schnell + 1-bit conversion
-│   ├── comfy_workflow.py   # Builds the ComfyUI prompt graph
-│   └── models.py           # Pydantic message schemas
+│   ├── main.py            # FastAPI app, /ws protocol router
+│   ├── config.py          # env config (Speaches + ComfyUI URLs)
+│   ├── stt.py             # Speaches (Whisper) speech-to-text
+│   ├── opus_decode.py     # raw Opus → WAV via opuslib (device audio)
+│   ├── device_protocol.py # Cheeko device session (hello, Opus, line_art_*)
+│   ├── device_messages.py # builders for server→device messages
+│   ├── image_gen.py       # FLUX call + resize + 1-bit threshold conversion
+│   ├── comfy_client.py    # ComfyUI submit/poll/fetch
+│   ├── comfy_workflow.py  # ComfyUI FLUX.1-schnell prompt graph
+│   └── models.py          # Pydantic schemas (browser protocol)
 ├── static/
-│   └── index.html          # Browser test client
-├── docker-compose.yml      # Speaches service definition
-├── .env.example            # Environment variable template
-├── requirements.txt
-└── README.md
+│   ├── device.html        # device-protocol browser demo
+│   └── index.html         # text/voice browser client
+├── tests/                 # pytest suite
+├── ai_printer_client.py   # CLI device test client
+├── ai_printer_gui.py      # GUI device test client
+├── device_e2e_test.py     # device-protocol harness
+├── e2e_test.py            # browser-protocol harness
+├── comfyui.Dockerfile     # local ComfyUI image
+├── docker-compose.yml     # Speaches + ComfyUI services
+├── aiprinter-server-contract.md  # device wire protocol (source of truth)
+├── .env.example
+└── requirements.txt
 ```
 
-## Server-Side Services
+---
 
-These are called by the server only. The device does NOT need any API keys.
+## Tests
 
-| Service         | Provider                                   | Purpose                     |
-|-----------------|--------------------------------------------|-----------------------------|
-| Speech-to-Text  | Speaches (Docker :8001, Whisper large-v3)  | Transcribes audio to text   |
-| Image Generation| ComfyUI (native :8188, FLUX.1-schnell fp8) | Generates line art from text|
-| Image Conversion| Local (Pillow)                             | Resizes + converts to 1-bit |
+```bash
+python -m pytest -q
+```
+
+Covers the config, Speaches client, Opus decode (real libopus round-trip), the
+ComfyUI workflow/client, the device session + message builders, the `/ws` protocol
+routing, and the 1-bit bitmap packing.

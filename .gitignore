@@ -9,3 +9,4 @@ printed*.png
 e2e_*.png
 .venv/
 .claude/
+generated_images/
