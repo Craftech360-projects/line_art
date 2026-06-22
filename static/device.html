@@ -67,7 +67,14 @@
     </div>
 
     <script>
-        const wsUrl = `ws://${location.host}/ws`;
+        // Target the app server (port 8090). When this page is opened from the app
+        // itself, location.host already points there. But if it's served by Live
+        // Server (:5500) or opened as a file://, location.host would be wrong — so
+        // fall back to <hostname>:8090. Override with ?host=192.168.0.186:8090.
+        const wsHost = new URLSearchParams(location.search).get('host')
+            || (location.port === '8090' ? location.host
+                : (location.hostname || 'localhost') + ':8090');
+        const wsUrl = `ws://${wsHost}/ws`;
         let ws = null, sessionId = null;
 
         function log(t, c='sys') { const e=document.getElementById('log'); const s=document.createElement('span'); s.className=c; s.textContent=t+'\n'; e.appendChild(s); e.scrollTop=e.scrollHeight; }
@@ -77,6 +84,7 @@
         // ---- device handshake on the persistent connection ----
         function toggleConnect() {
             if (ws && ws.readyState === WebSocket.OPEN) { ws.close(); return; }
+            log('connecting to ' + wsUrl + ' …');
             ws = new WebSocket(wsUrl); ws.binaryType='arraybuffer';
             ws.onopen = () => {
                 pill('connPill','connected',true);

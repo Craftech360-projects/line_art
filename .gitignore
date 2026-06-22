@@ -4,3 +4,6 @@ __pycache__/
 *.raw
 *.bmp
 .env
+debug_audio/
+printed*.png
+e2e_*.png
