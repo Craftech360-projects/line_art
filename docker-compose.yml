@@ -29,9 +29,10 @@ services:
       - "8188:8188"   # ComfyUI HTTP API + UI
     volumes:
       # Host bind mounts work because this image runs as root (no UID enforcement).
-      # Place flux1-schnell-fp8.safetensors in comfyui-data/basedir/models/checkpoints/.
-      - /c/Users/PC/Desktop/comfyui-data/basedir/models:/ComfyUI/models
-      - /c/Users/PC/Desktop/comfyui-data/basedir/output:/ComfyUI/output
+      # Project-relative path (created by the setup script). Place
+      # flux1-schnell-fp8.safetensors in comfyui-data/models/checkpoints/.
+      - ./comfyui-data/models:/ComfyUI/models
+      - ./comfyui-data/output:/ComfyUI/output
     deploy:
       resources:
         reservations:

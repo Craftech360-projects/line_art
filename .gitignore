@@ -10,3 +10,4 @@ e2e_*.png
 .venv/
 .claude/
 generated_images/
+comfyui-data/
