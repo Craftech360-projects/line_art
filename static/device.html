@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Printer — Device Protocol Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 20px; background: #0f1115; color: #e6e6e6; }
+        h1 { font-size: 1.4rem; }
+        .sub { color: #8a8f98; font-size: 0.85rem; margin: 4px 0 18px; }
+        .sub code { background:#1a1d24; padding:1px 5px; border-radius:4px; }
+        .note { background:#1a1d24; border:1px solid #2a2e37; border-left:3px solid #d99a2b; border-radius:6px; padding:10px 12px; font-size:0.8rem; color:#cfc2a0; margin-bottom:16px; }
+        .row { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+        button { padding: 10px 18px; border: none; border-radius: 6px; font-size: 0.95rem; cursor: pointer; background: #2d6cdf; color: #fff; }
+        button:hover { background: #3a78ea; }
+        button:disabled { background: #3a3f4a; color: #777; cursor: not-allowed; }
+        input[type=text] { flex: 1; min-width: 220px; padding: 10px 12px; border: 1px solid #333; border-radius: 6px; background: #1a1d24; color: #eee; font-size: 0.95rem; }
+        .pill { font-size: 0.72rem; padding: 3px 9px; border-radius: 999px; background:#1a1d24; border:1px solid #333; }
+        .pill.ok { border-color:#2e7d32; color:#81c784; }
+        .pill.off { border-color:#555; color:#888; }
+        .panel { background:#1a1d24; border:1px solid #2a2e37; border-radius:8px; padding:14px; margin-bottom:16px; }
+        .panel h2 { font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:#8a8f98; margin-bottom:10px; }
+        #log { font-family: ui-monospace, monospace; font-size:0.78rem; line-height:1.5; white-space:pre-wrap; word-break:break-word; max-height:240px; overflow-y:auto; }
+        .tx{color:#64b5f6} .rx{color:#81c784} .err{color:#ef5350} .sys{color:#8a8f98}
+        #printer { display:flex; flex-direction:column; align-items:center; gap:10px; }
+        canvas { background:#fff; border-radius:4px; image-rendering:pixelated; width:384px; max-width:100%; box-shadow:0 4px 20px rgba(0,0,0,.4); }
+        .meta { font-size:0.8rem; color:#8a8f98; text-align:center; }
+    </style>
+</head>
+<body>
+    <h1>AI Printer — Device Protocol Demo</h1>
+    <div class="sub">Speaks the Cheeko device protocol on <code>/ws</code>: <code>hello</code> handshake → <code>line_art_*</code> → renders the printed 1-bit bitmap.</div>
+
+    <div class="note">
+        ⓘ Browsers can't produce the bare 16&nbsp;kHz Opus frames the real device sends, so this demo drives
+        generation with a <b>text prompt</b> (it opens a short browser-protocol connection for that). It still
+        performs the real <b>device hello handshake</b> and renders the <code>line_art</code> output exactly as
+        the device's printer would. For the real audio path, use <code>ai_printer_client.py</code> (Python, raw Opus).
+    </div>
+
+    <div class="row">
+        <span class="pill off" id="connPill">disconnected</span>
+        <span class="pill off" id="sessPill">no session</span>
+        <button id="connectBtn" onclick="toggleConnect()">Connect (device hello)</button>
+    </div>
+
+    <div class="panel">
+        <h2>Prompt → print</h2>
+        <div class="row">
+            <input type="text" id="textInput" placeholder="e.g. a cat, a robot, a house" disabled />
+            <button id="sendBtn" onclick="generate()" disabled>Print</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Printer output</h2>
+        <div id="printer">
+            <canvas id="canvas" width="384" height="240"></canvas>
+            <div class="meta" id="meta">waiting…</div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Protocol log</h2>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const wsUrl = `ws://${location.host}/ws`;
+        let ws = null, sessionId = null;
+
+        function log(t, c='sys') { const e=document.getElementById('log'); const s=document.createElement('span'); s.className=c; s.textContent=t+'\n'; e.appendChild(s); e.scrollTop=e.scrollHeight; }
+        const pill = (id,t,ok)=>{const p=document.getElementById(id);p.textContent=t;p.className='pill '+(ok?'ok':'off');};
+        const ctrls = on => { document.getElementById('textInput').disabled=!on; document.getElementById('sendBtn').disabled=!on; };
+
+        // ---- device handshake on the persistent connection ----
+        function toggleConnect() {
+            if (ws && ws.readyState === WebSocket.OPEN) { ws.close(); return; }
+            ws = new WebSocket(wsUrl); ws.binaryType='arraybuffer';
+            ws.onopen = () => {
+                pill('connPill','connected',true);
+                document.getElementById('connectBtn').textContent='Disconnect';
+                const hello = { type:'hello', version:1, features:{mcp:true}, transport:'websocket',
+                    audio_params:{format:'opus',sample_rate:16000,channels:1,frame_duration:60} };
+                ws.send(JSON.stringify(hello));
+                log('TX hello (device handshake)','tx');
+            };
+            ws.onclose = () => { pill('connPill','disconnected',false); pill('sessPill','no session',false);
+                document.getElementById('connectBtn').textContent='Connect (device hello)'; sessionId=null; ctrls(false); log('connection closed'); };
+            ws.onerror = () => log('websocket error','err');
+            ws.onmessage = e => {
+                let m; try { m=JSON.parse(e.data); } catch { return; }
+                if (m.type==='hello') {
+                    sessionId = m.session_id || '(none)';
+                    pill('sessPill','session '+sessionId.slice(0,8),true);
+                    log('RX hello — transport='+m.transport+' session='+sessionId,'rx');
+                    ctrls(true);
+                } else {
+                    log('RX '+m.type,'rx');
+                }
+            };
+        }
+
+        // ---- prompt -> print (uses the browser protocol on a short-lived connection,
+        //      since the device protocol is audio-driven and we have no Opus mic) ----
+        function generate() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) return;
+            document.getElementById('meta').textContent = 'prompt: "'+text+'" — generating…';
+            log('line_art request for "'+text+'"','tx');
+            ctrls(false);
+            const t = new WebSocket(wsUrl); t.binaryType='arraybuffer';
+            t.onopen = () => t.send(JSON.stringify({ type:'text_input', text }));
+            t.onmessage = e => {
+                let m; try { m=JSON.parse(e.data); } catch { return; }
+                if (m.type==='progress') log('  progress['+m.stage+']: '+m.message,'rx');
+                else if (m.type==='error') { log('  error: '+m.message,'err'); document.getElementById('meta').textContent='error: '+m.message; ctrls(true); t.close(); }
+                else if (m.type==='result') {
+                    log('  line_art '+m.width+'x'+m.height+' — printing','rx');
+                    renderBitmap(m.raw_mono, m.width, m.height);
+                    ctrls(true); t.close();
+                }
+            };
+            t.onerror = () => { log('  request failed','err'); ctrls(true); };
+            document.getElementById('textInput').value='';
+        }
+
+        // ---- decode 1-bit raw_mono (MSB-first, 1=black) -> canvas ----
+        function renderBitmap(rawB64, width, height) {
+            const bytes = atob(rawB64), bpr = width/8;
+            const cv = document.getElementById('canvas'); cv.width=width; cv.height=height;
+            const ctx = cv.getContext('2d'); const img = ctx.createImageData(width, height);
+            for (let y=0;y<height;y++) for (let x=0;x<width;x++) {
+                const bit = (bytes.charCodeAt(y*bpr+(x>>3)) >> (7-(x&7))) & 1;
+                const v = bit?0:255, o=(y*width+x)*4;
+                img.data[o]=img.data[o+1]=img.data[o+2]=v; img.data[o+3]=255;
+            }
+            ctx.putImageData(img,0,0);
+            document.getElementById('meta').textContent = width+'×'+height+' · 1-bit · '+bytes.length+' bytes printed';
+        }
+
+        document.getElementById('textInput').addEventListener('keydown', e => { if (e.key==='Enter') generate(); });
+    </script>
+</body>
+</html>
