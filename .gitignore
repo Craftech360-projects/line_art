@@ -7,3 +7,5 @@ __pycache__/
 debug_audio/
 printed*.png
 e2e_*.png
+.venv/
+.claude/
