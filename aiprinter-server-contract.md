@@ -119,6 +119,39 @@ The printer pipeline streams progress then a final monochrome bitmap.
 ```
 Send the `*_progress` updates first, then exactly one `line_art` (or a `line_art_error`) to release the device from its waiting state.
 
+### Cheeko-specific: print confirmation (device → server) — generation is gated
+
+Image generation is gated on the user's confirmation. After the server sends
+`line_art_transcription`, the device asks the user "print this?" and the server
+**must wait** — it must NOT generate the bitmap yet. The device then sends
+exactly one decision (text frame):
+
+| `type` | Meaning | Server must |
+|---|---|---|
+| `print_confirm` | user accepted the transcription | generate, then send `line_art_progress` + exactly one `line_art` (or `line_art_error`) |
+| `print_reject` | user rejected | abort this prompt; send nothing further |
+
+These carry no payload beyond `type`; the server correlates them with the most
+recent `line_art_transcription` on the connection (one prompt in flight at a time).
+
+Gated sequence:
+
+```
+device → server : (listen start / opus frames / listen stop)
+server → device : line_art_transcription { text }
+                  ── server PAUSES; no generation yet ──
+device          : shows "print this? RECORD = print · CANCEL = reject"
+
+  print_confirm → server generates → line_art_progress → line_art (or line_art_error)
+  print_reject  → server aborts, sends nothing
+```
+
+Notes:
+- After `print_confirm` the device waits in a DRAWING state with no client-side
+  timeout, so the server must always terminate with `line_art` or `line_art_error`.
+- A new audio upload (`listen start`) voids any prior un-confirmed transcription.
+- A `print_confirm` with no pending transcription is ignored.
+
 ### Cheeko-specific: RFID card content
 
 When the device scans an RFID card it asks the server to resolve it. The server replies with one of:
