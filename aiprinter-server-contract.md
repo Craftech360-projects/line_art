@@ -152,6 +152,29 @@ Notes:
 - A new audio upload (`listen start`) voids any prior un-confirmed transcription.
 - A `print_confirm` with no pending transcription is ignored.
 
+### Browser/text path: print confirmation (the AiPrinter `transcription`/`result` firmware)
+
+The AiPrinter device (firmware `AiPrinterCFT`) speaks the **browser protocol**
+message names — `progress`, `transcription`, `result`, `error` — and sends a
+full WAV blob as one binary frame (no `hello`, no Opus). The server routes it to
+the browser path, which is **also gated** on the same `print_confirm` /
+`print_reject` frames:
+
+```
+device → server : (binary) WAV
+server → device : progress { stage: "stt" }
+server → device : transcription { text }
+                  ── server PAUSES; no generation yet ──
+  print_confirm → progress { stage:"generating" } → result { raw_mono, width, height }  (or error)
+  print_reject  → server aborts, sends nothing
+```
+
+Gating applies to **audio** only — a typed `text_input` frame still generates
+immediately. A `print_confirm` with no pending transcription is ignored; a new
+audio frame voids any prior un-confirmed transcription. After `print_confirm`
+the server always terminates with exactly one `result` or `error` (the firmware
+waits in its DRAWING state with no client-side timeout).
+
 ### Cheeko-specific: RFID card content
 
 When the device scans an RFID card it asks the server to resolve it. The server replies with one of:
