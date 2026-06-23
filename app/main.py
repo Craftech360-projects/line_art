@@ -78,12 +78,14 @@ async def handle_text_input(ws: WebSocket, subject: str):
         await send_json(ws, ErrorMessage(stage="image_gen", message=str(e)))
 
 
-async def handle_audio_input(ws: WebSocket, audio_bytes: bytes):
-    """Process audio -> transcription -> line art image."""
+async def handle_audio_input(ws: WebSocket, audio_bytes: bytes) -> str | None:
+    """Process audio -> transcription. Sends `transcription` and RETURNS the text
+    (the pending prompt) — generation is gated behind a later print_confirm.
+    Returns None if the audio was too large or STT was empty/failed (error sent)."""
     MAX_AUDIO_SIZE = 10 * 1024 * 1024  # ~10MB
     if len(audio_bytes) > MAX_AUDIO_SIZE:
         await send_json(ws, ErrorMessage(stage="input", message="Audio too large. Keep recordings under 10 seconds."))
-        return
+        return None
 
     logger.info("Audio received: %d bytes (%.1f KB)", len(audio_bytes), len(audio_bytes) / 1024)
     await send_json(ws, ProgressMessage(stage="stt", message="Transcribing audio..."))
@@ -93,29 +95,50 @@ async def handle_audio_input(ws: WebSocket, audio_bytes: bytes):
     except Exception as e:
         logger.exception("Transcription failed")
         await send_json(ws, ErrorMessage(stage="stt", message=f"Transcription failed: {e}"))
-        return
+        return None
 
     if not text:
         logger.warning("STT returned empty transcription")
         await send_json(ws, ErrorMessage(stage="stt", message="Could not transcribe any speech from audio."))
-        return
+        return None
 
     logger.info("Transcription result: '%s'", text)
     await send_json(ws, TranscriptionMessage(text=text))
-    await handle_text_input(ws, text)
+    return text
 
 
-async def _process_browser_message(ws: WebSocket, message: dict):
-    """Handle one message in the existing browser protocol."""
+async def _process_browser_message(ws: WebSocket, message: dict, pending_text):
+    """Handle one browser-protocol frame. `pending_text` is the transcription
+    awaiting a decision (or None). Returns the new pending_text."""
+    if "bytes" in message and message["bytes"] is not None:
+        # New audio voids any prior un-confirmed transcription.
+        return await handle_audio_input(ws, message["bytes"])
+
     if "text" in message and message["text"] is not None:
         try:
             data = json.loads(message["text"])
-            parsed = TextInput(**data)
-            await handle_text_input(ws, parsed.text)
-        except (json.JSONDecodeError, ValueError) as e:
+        except json.JSONDecodeError as e:
             await send_json(ws, ErrorMessage(stage="input", message=f"Invalid message: {e}"))
-    elif "bytes" in message and message["bytes"] is not None:
-        await handle_audio_input(ws, message["bytes"])
+            return pending_text
+
+        mtype = data.get("type") if isinstance(data, dict) else None
+        if mtype == "print_confirm":
+            if pending_text:
+                await handle_text_input(ws, pending_text)
+            return None  # consumed (or no-op if nothing pending)
+        if mtype == "print_reject":
+            return None  # abort; send nothing
+
+        # Otherwise treat it as a typed text_input (generates immediately).
+        try:
+            parsed = TextInput(**data)
+        except (TypeError, ValueError) as e:
+            await send_json(ws, ErrorMessage(stage="input", message=f"Invalid message: {e}"))
+            return pending_text
+        await handle_text_input(ws, parsed.text)
+        return None  # typed text also clears any pending audio prompt
+
+    return pending_text
 
 
 @app.websocket("/ws")
@@ -138,13 +161,13 @@ async def websocket_endpoint(ws: WebSocket):
                 return
         # Not a device hello: process this first message, then continue the
         # existing browser loop.
-        await _process_browser_message(ws, first)
+        pending_text = await _process_browser_message(ws, first, None)
         while True:
             message = await ws.receive()
             if message.get("type") != "websocket.receive":
                 if message.get("type") == "websocket.disconnect":
                     break
                 continue
-            await _process_browser_message(ws, message)
+            pending_text = await _process_browser_message(ws, message, pending_text)
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
