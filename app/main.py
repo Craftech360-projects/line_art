@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -19,6 +21,23 @@ from app.device_protocol import handle_device_session
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Set SAVE_INPUT_AUDIO=1 to dump each browser-path upload (the WAV the AiPrinter
+# device sends) under debug_audio/ — handy for diagnosing bad transcriptions by
+# playing back exactly what STT received. Mirrors SAVE_DEVICE_AUDIO on the device
+# path. The browser frame is already a WAV blob, so it's saved as-is.
+SAVE_INPUT_AUDIO = os.environ.get("SAVE_INPUT_AUDIO", "").lower() in ("1", "true", "yes")
+_INPUT_AUDIO_DIR = Path("debug_audio")
+
+
+def _save_input_wav(audio_bytes: bytes) -> None:
+    try:
+        _INPUT_AUDIO_DIR.mkdir(exist_ok=True)
+        path = _INPUT_AUDIO_DIR / f"{int(time.time())}_input.wav"
+        path.write_bytes(audio_bytes)
+        logger.info("Saved incoming input audio -> %s (%d bytes)", path, len(audio_bytes))
+    except Exception:
+        logger.exception("Failed to save input audio")
 
 # Fire one throwaway generation at startup so ComfyUI loads the 17 GB FLUX model
 # into VRAM before any device connects — the first real request is then ~5 s
@@ -88,6 +107,8 @@ async def handle_audio_input(ws: WebSocket, audio_bytes: bytes) -> str | None:
         return None
 
     logger.info("Audio received: %d bytes (%.1f KB)", len(audio_bytes), len(audio_bytes) / 1024)
+    if SAVE_INPUT_AUDIO:
+        _save_input_wav(audio_bytes)
     await send_json(ws, ProgressMessage(stage="stt", message="Transcribing audio..."))
 
     try:
