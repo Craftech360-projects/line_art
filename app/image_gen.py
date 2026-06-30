@@ -6,9 +6,10 @@ import re
 import time
 from pathlib import Path
 
+import httpx
 from PIL import Image
 
-from app import comfy_client
+from app import config
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,17 @@ def _save_copies(subject: str, full_png: bytes, mono_png: bytes) -> None:
 
 def build_prompt(subject: str) -> str:
     return PROMPT_TEMPLATE.format(subject=subject.strip())
+
+
+async def generate_with_huggingface(prompt: str) -> bytes:
+    """Generate a PNG from a prompt via the HuggingFace FLUX inference API."""
+    headers = {}
+    if config.HF_API_TOKEN:
+        headers["Authorization"] = f"Bearer {config.HF_API_TOKEN}"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(config.HF_MODEL_URL, headers=headers, json={"inputs": prompt})
+        resp.raise_for_status()
+        return resp.content
 
 
 def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
@@ -96,12 +108,12 @@ def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
 
 
 async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
-    """Generate line art via local ComfyUI.
+    """Generate line art via the HuggingFace FLUX inference API.
 
     Returns (base64_image_uri, prompt_used, base64_raw_mono, height).
     """
     prompt = build_prompt(subject)
-    image_bytes = await comfy_client.generate_png(prompt)
+    image_bytes = await generate_with_huggingface(prompt)
 
     png_bytes, raw_bytes = to_raw_mono(image_bytes)
     _save_copies(subject, image_bytes, png_bytes)

@@ -1,5 +1,11 @@
 import os
 
-SPEACHES_BASE_URL = os.environ.get("SPEACHES_BASE_URL", "http://localhost:8001")
-SPEACHES_MODEL = os.environ.get("SPEACHES_MODEL", "Systran/faster-whisper-large-v3")
-COMFYUI_BASE_URL = os.environ.get("COMFYUI_BASE_URL", "http://localhost:8188")
+# Cloud backends (same as the main branch): Groq Whisper for STT, HuggingFace
+# FLUX for image generation.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "whisper-large-v3")
+HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
+HF_MODEL_URL = os.environ.get(
+    "HF_MODEL_URL",
+    "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
+)

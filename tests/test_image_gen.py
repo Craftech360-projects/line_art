@@ -14,12 +14,12 @@ def _png(color):
 
 
 @pytest.mark.asyncio
-async def test_generate_line_art_uses_comfy_and_returns_tuple(monkeypatch):
-    async def fake_generate_png(prompt):
+async def test_generate_line_art_uses_huggingface_and_returns_tuple(monkeypatch):
+    async def fake_hf(prompt):
         assert "line art" in prompt  # prompt template applied
         return _png((0, 0, 0))  # all black
 
-    monkeypatch.setattr(image_gen.comfy_client, "generate_png", fake_generate_png)
+    monkeypatch.setattr(image_gen, "generate_with_huggingface", fake_hf)
 
     data_uri, prompt_used, raw_b64, height = await image_gen.generate_line_art("a cat")
 

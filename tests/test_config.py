@@ -1,5 +1,4 @@
 import importlib
-import os
 
 
 def _reload_config():
@@ -8,18 +7,21 @@ def _reload_config():
 
 
 def test_defaults_when_env_unset(monkeypatch):
-    monkeypatch.delenv("SPEACHES_BASE_URL", raising=False)
-    monkeypatch.delenv("SPEACHES_MODEL", raising=False)
-    monkeypatch.delenv("COMFYUI_BASE_URL", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+    monkeypatch.delenv("HF_API_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_TOKEN", raising=False)
+    monkeypatch.delenv("HF_MODEL_URL", raising=False)
     cfg = _reload_config()
-    assert cfg.SPEACHES_BASE_URL == "http://localhost:8001"
-    assert cfg.SPEACHES_MODEL == "Systran/faster-whisper-large-v3"
-    assert cfg.COMFYUI_BASE_URL == "http://localhost:8188"
+    assert cfg.GROQ_API_KEY is None
+    assert cfg.GROQ_MODEL == "whisper-large-v3"
+    assert cfg.HF_API_TOKEN is None
+    assert "FLUX.1-schnell" in cfg.HF_MODEL_URL
 
 
 def test_env_overrides(monkeypatch):
-    monkeypatch.setenv("SPEACHES_BASE_URL", "http://host:9000")
-    monkeypatch.setenv("COMFYUI_BASE_URL", "http://host:9188")
+    monkeypatch.setenv("GROQ_API_KEY", "gk-123")
+    monkeypatch.setenv("HF_API_TOKEN", "hf-456")
     cfg = _reload_config()
-    assert cfg.SPEACHES_BASE_URL == "http://host:9000"
-    assert cfg.COMFYUI_BASE_URL == "http://host:9188"
+    assert cfg.GROQ_API_KEY == "gk-123"
+    assert cfg.HF_API_TOKEN == "hf-456"

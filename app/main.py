@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -16,7 +15,6 @@ from app.models import ProgressMessage, TranscriptionMessage, ResultMessage, Err
 from app.image_gen import generate_line_art
 from app.stt import transcribe
 from app import config
-from app import comfy_client
 from app.device_protocol import handle_device_session
 
 logging.basicConfig(level=logging.INFO)
@@ -39,33 +37,14 @@ def _save_input_wav(audio_bytes: bytes) -> None:
     except Exception:
         logger.exception("Failed to save input audio")
 
-# Fire one throwaway generation at startup so ComfyUI loads the 17 GB FLUX model
-# into VRAM before any device connects — the first real request is then ~5 s
-# instead of the ~4 min cold load. Runs in the background; never blocks startup
-# and never crashes the app if ComfyUI is down. Disable with WARMUP_ON_START=0.
-WARMUP_ON_START = os.environ.get("WARMUP_ON_START", "1").lower() in ("1", "true", "yes")
-
-
-async def _warmup():
-    try:
-        logger.info("Warm-up: priming ComfyUI (loading FLUX into VRAM)...")
-        await comfy_client.generate_png("warmup")
-        logger.info("Warm-up complete — ComfyUI is hot; first request will be fast.")
-    except Exception as e:
-        logger.warning("Warm-up skipped/failed (ComfyUI not ready?): %s", e)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
-        "Server ready (offline). STT=Speaches@%s model=%s | ImageGen=ComfyUI@%s",
-        config.SPEACHES_BASE_URL,
-        config.SPEACHES_MODEL,
-        config.COMFYUI_BASE_URL,
+        "Server ready. STT=Groq(%s)%s | ImageGen=HuggingFace FLUX%s",
+        config.GROQ_MODEL,
+        "" if config.GROQ_API_KEY else " [GROQ_API_KEY missing!]",
+        "" if config.HF_API_TOKEN else " [HF_API_TOKEN missing!]",
     )
-    if WARMUP_ON_START:
-        # Background task — does not block startup.
-        asyncio.create_task(_warmup())
     yield
 
 
