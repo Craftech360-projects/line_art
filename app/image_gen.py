@@ -122,3 +122,50 @@ async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
     height = len(raw_bytes) // 48  # 48 bytes per row
 
     return f"data:image/png;base64,{image_b64}", prompt, raw_b64, height
+
+
+# --- AI Imagine: color JPEG path (separate from the 1-bit printer path) ---
+
+DEVICE_W, DEVICE_H = 320, 240
+MAX_JPEG_BYTES = 200 * 1024
+
+IMAGINE_PROMPT_TEMPLATE = (
+    "a colorful, friendly children's illustration of {subject}, "
+    "bright cartoon style, simple shapes, clean plain background, cheerful, safe for kids"
+)
+
+
+def build_imagine_prompt(subject: str) -> str:
+    return IMAGINE_PROMPT_TEMPLATE.format(subject=subject.strip())
+
+
+def to_device_jpeg(image_bytes: bytes) -> bytes:
+    """Center-crop to 4:3, resize to 320x240, return baseline JPEG <= 200 KB (RGB)."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+    target = DEVICE_W / DEVICE_H  # 4:3
+    if w / h > target:  # too wide -> crop sides
+        new_w = int(round(h * target))
+        left = (w - new_w) // 2
+        img = img.crop((left, 0, left + new_w, h))
+    elif w / h < target:  # too tall -> crop top/bottom
+        new_h = int(round(w / target))
+        top = (h - new_h) // 2
+        img = img.crop((0, top, w, top + new_h))
+    img = img.resize((DEVICE_W, DEVICE_H), Image.LANCZOS)
+
+    data = b""
+    for quality in (85, 75, 65, 55, 45, 35):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True, progressive=False)
+        data = buf.getvalue()
+        if len(data) <= MAX_JPEG_BYTES:
+            return data
+    return data  # ponytail: accept the smallest attempt; 320x240 JPEG ~never exceeds 200KB
+
+
+async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
+    """Generate a color device JPEG for an imagine prompt. Returns (jpeg_bytes, prompt)."""
+    prompt = build_imagine_prompt(subject)
+    image_bytes = await generate_with_huggingface(prompt)
+    return to_device_jpeg(image_bytes), prompt
