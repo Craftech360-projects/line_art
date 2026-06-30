@@ -1,6 +1,7 @@
 """Cheeko device WebSocket session: hello handshake, Opus audio buffering,
 and the line_art_* print message flow. See aiprinter-server-contract.md.
 """
+import base64
 import json
 import logging
 import os
@@ -69,16 +70,33 @@ async def _generate_and_send(ws, session_id, text, generate_line_art):
     await ws.send_json(dm.line_art(raw_mono, 384, height, session_id=session_id))
 
 
+async def _generate_imagine_and_send(ws, session_id, text, generate_imagine):
+    """Imagine mode: generate a color JPEG immediately (no print_confirm) and
+    send it as an `image` message. The gateway uploads it and builds image{url}."""
+    await ws.send_json(dm.line_art_progress(
+        f"Imagining '{text}'...", stage="image_gen", session_id=session_id))
+    try:
+        jpeg, _prompt = await generate_imagine(text)
+    except Exception as e:
+        logger.exception("Imagine generation failed")
+        await ws.send_json(dm.line_art_error(str(e), stage="image_gen", session_id=session_id))
+        return
+    image_b64 = base64.b64encode(jpeg).decode()
+    await ws.send_json(dm.image(image_b64, 320, 240, caption=text, session_id=session_id))
+
+
 async def handle_device_session(
     ws,
     first_message: dict,
     *,
     transcribe=stt.transcribe,
     generate_line_art=image_gen.generate_line_art,
+    generate_imagine=image_gen.generate_imagine_jpeg,
     decode=opus_decode.decode_opus_to_wav,
 ) -> None:
     """Drive one device session. `first_message` is the parsed device hello."""
     session_id = uuid.uuid4().hex
+    imagine = first_message.get("feature") == "ai_imagine"
     await ws.send_json(dm.hello_reply(session_id))
     logger.info("Device session %s started", session_id)
 
@@ -113,10 +131,17 @@ async def handle_device_session(
                         if not listening:
                             continue
                         listening = False
-                        pending_text = await _transcribe_and_prompt(
+                        text = await _transcribe_and_prompt(
                             ws, session_id, opus_frames, transcribe, decode,
                         )
                         opus_frames = []
+                        if imagine:
+                            if text:
+                                await _generate_imagine_and_send(
+                                    ws, session_id, text, generate_imagine)
+                            pending_text = None  # imagine never waits for confirm
+                        else:
+                            pending_text = text
                 elif mtype_in == "print_confirm":
                     if pending_text:
                         text = pending_text
