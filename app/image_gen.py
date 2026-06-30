@@ -131,12 +131,75 @@ MAX_JPEG_BYTES = 200 * 1024
 
 IMAGINE_PROMPT_TEMPLATE = (
     "a colorful, friendly children's illustration of {subject}, "
-    "bright cartoon style, simple shapes, clean plain background, cheerful, safe for kids"
+    "bright cartoon style, simple shapes, clean plain background, cheerful, safe for kids, "
+    "no text, no words, no letters, no captions, no writing, no signature"
 )
+
+# Children speak in full sentences ("can you draw a beautiful cat"). Feeding the whole
+# utterance to FLUX makes it render those words into the picture, so strip the leading
+# request phrasing down to the actual subject ("a beautiful cat").
+_SUBJECT_PREFIXES = [
+    "can you please", "can you", "could you", "would you", "will you",
+    "please draw me", "please draw", "please make", "please show me", "please",
+    "i want you to draw", "i want a picture of", "i want to see", "i want",
+    "i would like", "i'd like", "draw me a picture of", "draw me", "draw a picture of",
+    "draw", "make me", "make a picture of", "make", "show me a picture of",
+    "show me", "create a picture of", "create", "generate", "paint", "a picture of",
+    "picture of", "image of",
+]
+
+
+def _clean_subject(subject: str) -> str:
+    """Strip leading request phrasing so only the subject remains."""
+    s = subject.strip().strip("?.!").strip()
+    low = s.lower()
+    changed = True
+    while changed:
+        changed = False
+        for pref in _SUBJECT_PREFIXES:
+            if low.startswith(pref + " "):
+                s = s[len(pref) + 1:].strip()
+                low = s.lower()
+                changed = True
+                break
+    return s or subject.strip()
+
+
+# Child-safety guard: block obviously unsafe subjects at the prompt boundary. This is a
+# FIRST-LAYER keyword filter, not a full moderation model — it pairs with the kid-safe
+# prompt template above. Raising here makes the gateway emit image_error code=safety_block.
+_UNSAFE_TERMS = {
+    # violence / weapons
+    "gun", "guns", "rifle", "pistol", "knife", "knives", "weapon", "weapons", "bomb",
+    "blood", "bloody", "gore", "gory", "kill", "killing", "murder", "dead", "death",
+    "corpse", "fight", "fighting", "war", "shoot", "shooting", "stab", "behead", "violence",
+    # scary / horror
+    "horror", "scary", "creepy", "zombie", "demon", "devil", "satan", "ghost", "nightmare",
+    "monster", "evil", "hell",
+    # adult / sexual
+    "nude", "naked", "nsfw", "sex", "sexy", "sexual", "porn", "boobs", "breast", "penis",
+    "vagina", "butt", "lingerie",
+    # substances
+    "drug", "drugs", "alcohol", "beer", "wine", "vodka", "whiskey", "cigarette", "smoking",
+    "weed", "cocaine",
+    # self-harm / hate
+    "suicide", "noose", "nazi", "swastika", "terrorist", "isis",
+}
+
+
+def _assert_child_safe(subject: str) -> None:
+    """Raise on obviously unsafe subjects so the gateway returns a safety_block error."""
+    words = set(re.findall(r"[a-z']+", subject.lower()))
+    hits = words & _UNSAFE_TERMS
+    if hits:
+        raise ValueError(
+            f"safety_block: subject not allowed for children ({', '.join(sorted(hits))})")
 
 
 def build_imagine_prompt(subject: str) -> str:
-    return IMAGINE_PROMPT_TEMPLATE.format(subject=subject.strip())
+    cleaned = _clean_subject(subject)
+    _assert_child_safe(cleaned)
+    return IMAGINE_PROMPT_TEMPLATE.format(subject=cleaned)
 
 
 def to_device_jpeg(image_bytes: bytes) -> bytes:
