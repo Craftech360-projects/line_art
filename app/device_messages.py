@@ -45,3 +45,16 @@ def line_art(raw_mono: str, width: int, height: int, session_id: str | None = No
         {"type": "line_art", "raw_mono": raw_mono, "width": width, "height": height},
         session_id,
     )
+
+
+def image(image_b64: str, width: int, height: int, caption: str | None = None,
+          mime: str = "image/jpeg", session_id: str | None = None) -> dict:
+    """AI Imagine result sent to the gateway: base64 JPEG bytes + dimensions.
+
+    The gateway uploads the bytes to S3 and builds the device-facing `image{url}`.
+    """
+    msg = {"type": "image", "image": image_b64, "mime": mime,
+           "width": width, "height": height}
+    if caption is not None:
+        msg["caption"] = caption
+    return _with_session(msg, session_id)
