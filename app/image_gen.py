@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app import config
 
@@ -49,13 +49,21 @@ def build_prompt(subject: str) -> str:
     return PROMPT_TEMPLATE.format(subject=subject.strip())
 
 
-async def generate_with_huggingface(prompt: str) -> bytes:
-    """Generate a PNG from a prompt via the HuggingFace FLUX inference API."""
+async def generate_with_huggingface(prompt: str, width: int | None = None,
+                                    height: int | None = None) -> bytes:
+    """Generate a PNG from a prompt via the HuggingFace FLUX inference API.
+
+    Pass width/height to request a specific aspect ratio (used by AI Imagine to get a
+    4:3 image that fills the 320x240 LCD). Omit them for the printer path (unchanged).
+    """
     headers = {}
     if config.HF_API_TOKEN:
         headers["Authorization"] = f"Bearer {config.HF_API_TOKEN}"
+    payload = {"inputs": prompt}
+    if width and height:
+        payload["parameters"] = {"width": width, "height": height}
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(config.HF_MODEL_URL, headers=headers, json={"inputs": prompt})
+        resp = await client.post(config.HF_MODEL_URL, headers=headers, json=payload)
         resp.raise_for_status()
         return resp.content
 
@@ -203,19 +211,16 @@ def build_imagine_prompt(subject: str) -> str:
 
 
 def to_device_jpeg(image_bytes: bytes) -> bytes:
-    """Center-crop to 4:3, resize to 320x240, return baseline JPEG <= 200 KB (RGB)."""
+    """Fit into 320x240 WITHOUT cropping (letterbox), return baseline JPEG <= 200 KB (RGB).
+
+    Cropping cut the subject's edges off; instead we scale-to-fit and pad so the whole
+    picture is visible. A 4:3 source (see generate_imagine_jpeg) fills the screen with
+    no visible bars; other aspects get small white margins rather than lost content.
+    """
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    w, h = img.size
-    target = DEVICE_W / DEVICE_H  # 4:3
-    if w / h > target:  # too wide -> crop sides
-        new_w = int(round(h * target))
-        left = (w - new_w) // 2
-        img = img.crop((left, 0, left + new_w, h))
-    elif w / h < target:  # too tall -> crop top/bottom
-        new_h = int(round(w / target))
-        top = (h - new_h) // 2
-        img = img.crop((0, top, w, top + new_h))
-    img = img.resize((DEVICE_W, DEVICE_H), Image.LANCZOS)
+    fitted = ImageOps.contain(img, (DEVICE_W, DEVICE_H), Image.LANCZOS)
+    img = Image.new("RGB", (DEVICE_W, DEVICE_H), (255, 255, 255))
+    img.paste(fitted, ((DEVICE_W - fitted.width) // 2, (DEVICE_H - fitted.height) // 2))
 
     data = b""
     for quality in (85, 75, 65, 55, 45, 35):
@@ -230,5 +235,7 @@ def to_device_jpeg(image_bytes: bytes) -> bytes:
 async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
     """Generate a color device JPEG for an imagine prompt. Returns (jpeg_bytes, prompt)."""
     prompt = build_imagine_prompt(subject)
-    image_bytes = await generate_with_huggingface(prompt)
+    # Ask FLUX for a 4:3 landscape so it matches the 320x240 LCD — fills the screen,
+    # no crop and no letterbox bars.
+    image_bytes = await generate_with_huggingface(prompt, width=1024, height=768)
     return to_device_jpeg(image_bytes), prompt

@@ -35,7 +35,7 @@ def test_build_imagine_prompt_is_colorful_and_child_safe():
 
 @pytest.mark.asyncio
 async def test_generate_imagine_jpeg_returns_jpeg_and_prompt(monkeypatch):
-    async def fake_hf(prompt: str) -> bytes:
+    async def fake_hf(prompt: str, width=None, height=None) -> bytes:
         return _solid_png(800, 600)
     monkeypatch.setattr(image_gen, "generate_with_huggingface", fake_hf)
 
