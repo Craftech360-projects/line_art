@@ -6,6 +6,9 @@ import os
 # Defaults are CLOUD so nothing changes unless you opt in.
 STT_BACKEND = os.environ.get("STT_BACKEND", "groq").lower()
 IMAGE_BACKEND = os.environ.get("IMAGE_BACKEND", "hf").lower()
+# MODERATION_BACKEND: "groq" (LLM child-safety check) | "off" (keyword filter only).
+# Separate from GROQ_API_KEY so you can disable moderation WITHOUT breaking Groq STT.
+MODERATION_BACKEND = os.environ.get("MODERATION_BACKEND", "groq").lower()
 
 # Local providers (used when the backends above are set to local/comfyui).
 SPEACHES_BASE_URL = os.environ.get("SPEACHES_BASE_URL", "http://localhost:8001")

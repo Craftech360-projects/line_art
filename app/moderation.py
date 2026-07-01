@@ -32,8 +32,8 @@ async def is_prompt_safe(subject: str, client: httpx.AsyncClient | None = None) 
     (True, "") — the keyword filter in image_gen remains the backstop, so a Groq
     outage degrades rather than blocking every image.
     """
-    if not config.GROQ_API_KEY:
-        return True, ""  # no key -> skip LLM layer; keyword filter still applies
+    if config.MODERATION_BACKEND == "off" or not config.GROQ_API_KEY:
+        return True, ""  # disabled or no key -> skip LLM layer; keyword filter still applies
 
     headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
     payload = {

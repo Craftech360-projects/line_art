@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         img_desc = f"ComfyUI @ {config.COMFYUI_BASE_URL}"
     else:
         img_desc = "HuggingFace FLUX" + ("" if config.HF_API_TOKEN else " [HF_API_TOKEN missing!]")
-    mod_desc = "Groq" if config.GROQ_API_KEY else "off (keyword-only)"
+    mod_desc = "Groq" if (config.MODERATION_BACKEND != "off" and config.GROQ_API_KEY) else "off (keyword-only)"
     logger.info("Server ready. STT=%s | ImageGen=%s | Moderation=%s", stt_desc, img_desc, mod_desc)
     yield
 
