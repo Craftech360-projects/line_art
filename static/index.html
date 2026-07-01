@@ -37,6 +37,15 @@
         <button id="recordBtn" onclick="toggleRecording()">Record</button>
     </div>
 
+    <div class="section" id="confirmSection" style="display:none;">
+        <div class="label">Confirm</div>
+        <div id="confirmPrompt" style="margin-bottom:8px;"></div>
+        <div class="input-group">
+            <button id="printBtn" onclick="sendConfirm()">Print this</button>
+            <button id="rejectBtn" onclick="sendReject()" style="background:#777;">Cancel</button>
+        </div>
+    </div>
+
     <div class="section">
         <div class="label">Log</div>
         <div id="log"></div>
@@ -68,15 +77,19 @@
                         break;
                     case 'transcription':
                         log(`Transcribed: "${msg.text}"`);
+                        // Voice path: ask the user to confirm before generating.
+                        showConfirm(msg.text);
                         break;
                     case 'result':
                         log(`Image received! Raw mono: ${msg.width}x${msg.height}, ${atob(msg.raw_mono).length} bytes`);
-                        document.getElementById('result').innerHTML = `<img src="${msg.image}" alt="Line art" /><p style="margin-top:8px;font-size:0.85rem;color:#666;">${msg.prompt_used}</p><p style="font-size:0.85rem;color:#666;">${msg.width}x${msg.height} | 1-bit mono | ${atob(msg.raw_mono).length} bytes</p><button onclick="downloadRaw()" style="margin-top:12px;">Download .raw</button>`;
                         window._rawData = msg.raw_mono;
+                        renderBitmap(msg.raw_mono, msg.width, msg.height);
+                        hideConfirm();
                         enableUI();
                         break;
                     case 'error':
                         log(`ERROR [${msg.stage}]: ${msg.message}`);
+                        hideConfirm();
                         enableUI();
                         break;
                 }
@@ -97,6 +110,60 @@
         function enableUI() {
             document.getElementById('sendBtn').disabled = false;
             document.getElementById('recordBtn').disabled = false;
+        }
+
+        function showConfirm(text) {
+            document.getElementById('confirmPrompt').textContent = `Heard: "${text}" — print this?`;
+            document.getElementById('confirmSection').style.display = '';
+        }
+
+        function hideConfirm() {
+            document.getElementById('confirmSection').style.display = 'none';
+        }
+
+        function sendConfirm() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({ type: 'print_confirm' }));
+            log('Sent decision: print_confirm');
+            hideConfirm();
+            disableUI();
+        }
+
+        function sendReject() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({ type: 'print_reject' }));
+            log('Sent decision: print_reject');
+            hideConfirm();
+            enableUI();
+        }
+
+        // Render packed 1-bpp (MSB-first, black=1, width/8 bytes per row) onto a canvas.
+        function renderBitmap(rawMonoB64, width, height) {
+            const bin = atob(rawMonoB64);
+            const bytesPerRow = width / 8;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            canvas.style.maxWidth = '100%';
+            canvas.style.border = '1px solid #ddd';
+            canvas.style.borderRadius = '6px';
+            canvas.style.imageRendering = 'pixelated';
+            const ctx = canvas.getContext('2d');
+            const imgData = ctx.createImageData(width, height);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const byte = bin.charCodeAt(y * bytesPerRow + (x >> 3));
+                    const isBlack = (byte >> (7 - (x & 7))) & 1;
+                    const v = isBlack ? 0 : 255;
+                    const o = (y * width + x) * 4;
+                    imgData.data[o] = v; imgData.data[o + 1] = v; imgData.data[o + 2] = v; imgData.data[o + 3] = 255;
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            document.getElementById('result').innerHTML =
+                `<p style="font-size:0.85rem;color:#666;">${width}x${height} | 1-bit mono | ${bin.length} bytes</p>` +
+                `<button onclick="downloadRaw()" style="margin-top:12px;">Download .raw</button>`;
+            document.getElementById('result').prepend(canvas);
         }
 
         function downloadRaw() {

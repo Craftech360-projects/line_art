@@ -23,5 +23,5 @@ async def transcribe(audio_bytes: bytes) -> str:
         resp.raise_for_status()
         result = resp.json()
         text = result.get("text", "").strip()
-        logger.info("Groq transcription: '%s'", text)
+        logger.info("Groq Whisper transcript: '%s'", text)
         return text

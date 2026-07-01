@@ -26,13 +26,13 @@ Device/Browser                          Server (this project)
 ## Setup
 
 ```bash
-cd C:\Users\Acer\line_art
+cd line_art
 
 # Create virtual environment (skip if env/ already exists)
-python -m venv env
+python3 -m venv env
 
 # Activate
-env\Scripts\activate
+source env/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -41,15 +41,15 @@ pip install -r requirements.txt
 ## Running the Server
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0
+python app/main.py
 ```
 
-The server starts on port 8000 and listens on all network interfaces.
+The server starts on port 8010 and listens on all network interfaces.
 
 ### Verify
 
 - Server logs should show: `Server ready. Using Groq Whisper API for STT.`
-- Open `http://127.0.0.1:8000/static/index.html` in a browser to test
+- Open `http://127.0.0.1:8010/static/index.html` in a browser to test
 
 ### Find Your Server IP
 
@@ -64,10 +64,10 @@ Look for `IPv4 Address` under `Wireless LAN adapter Wi-Fi` (e.g., `192.168.1.168
 Devices connect to a single WebSocket endpoint:
 
 ```
-ws://<SERVER_IP>:8000/ws
+ws://<SERVER_IP>:8010/ws
 ```
 
-Example: `ws://192.168.1.168:8000/ws`
+Example: `ws://192.168.1.168:8010/ws`
 
 No authentication required. The device and server must be on the same network.
 
