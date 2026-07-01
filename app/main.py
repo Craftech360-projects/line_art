@@ -39,12 +39,16 @@ def _save_input_wav(audio_bytes: bytes) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(
-        "Server ready. STT=Groq(%s)%s | ImageGen=HuggingFace FLUX%s",
-        config.GROQ_MODEL,
-        "" if config.GROQ_API_KEY else " [GROQ_API_KEY missing!]",
-        "" if config.HF_API_TOKEN else " [HF_API_TOKEN missing!]",
-    )
+    if config.STT_BACKEND == "local":
+        stt_desc = f"Speaches({config.SPEACHES_MODEL} @ {config.SPEACHES_BASE_URL})"
+    else:
+        stt_desc = f"Groq({config.GROQ_MODEL})" + ("" if config.GROQ_API_KEY else " [GROQ_API_KEY missing!]")
+    if config.IMAGE_BACKEND == "comfyui":
+        img_desc = f"ComfyUI @ {config.COMFYUI_BASE_URL}"
+    else:
+        img_desc = "HuggingFace FLUX" + ("" if config.HF_API_TOKEN else " [HF_API_TOKEN missing!]")
+    mod_desc = "Groq" if config.GROQ_API_KEY else "off (keyword-only)"
+    logger.info("Server ready. STT=%s | ImageGen=%s | Moderation=%s", stt_desc, img_desc, mod_desc)
     yield
 
 
