@@ -11,6 +11,7 @@ from PIL import Image, ImageOps
 
 from app import config
 from app import moderation
+from app import comfy_client
 
 logger = logging.getLogger(__name__)
 
@@ -116,13 +117,27 @@ def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
     return png_bytes, bytes(raw)
 
 
+async def _generate_image_bytes(prompt: str, width: int | None = None,
+                                height: int | None = None) -> bytes:
+    """Generate raw image bytes via the configured backend: cloud HF FLUX or local ComfyUI.
+
+    Switched by config.IMAGE_BACKEND ("hf" | "comfyui"). Used by both the printer
+    (line_art) path and the imagine path, so one flag flips both features.
+    """
+    if config.IMAGE_BACKEND == "comfyui":
+        return await comfy_client.generate_png(prompt, width=width or 768, height=height or 768)
+    if width and height:
+        return await generate_with_huggingface(prompt, width=width, height=height)
+    return await generate_with_huggingface(prompt)
+
+
 async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
-    """Generate line art via the HuggingFace FLUX inference API.
+    """Generate line art via the configured image backend.
 
     Returns (base64_image_uri, prompt_used, base64_raw_mono, height).
     """
     prompt = build_prompt(subject)
-    image_bytes = await generate_with_huggingface(prompt)
+    image_bytes = await _generate_image_bytes(prompt)
 
     png_bytes, raw_bytes = to_raw_mono(image_bytes)
     _save_copies(subject, image_bytes, png_bytes)
@@ -241,5 +256,5 @@ async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
         raise ValueError(f"safety_block: {reason}")
     # 4:3 landscape matches the 320x240 LCD (fills screen, no crop). 512x384 keeps FLUX
     # fast enough for the device's response window while staying sharp after downscale.
-    image_bytes = await generate_with_huggingface(prompt, width=512, height=384)
+    image_bytes = await _generate_image_bytes(prompt, width=512, height=384)
     return to_device_jpeg(image_bytes), prompt
