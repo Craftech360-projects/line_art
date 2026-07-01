@@ -125,7 +125,9 @@ async def _generate_image_bytes(prompt: str, width: int | None = None,
     (line_art) path and the imagine path, so one flag flips both features.
     """
     if config.IMAGE_BACKEND == "comfyui":
-        return await comfy_client.generate_png(prompt, width=width or 768, height=height or 768)
+        return await comfy_client.generate_png(
+            prompt, width=width or 768, height=height or 768,
+            timeout_s=config.COMFYUI_TIMEOUT_S)
     if width and height:
         return await generate_with_huggingface(prompt, width=width, height=height)
     return await generate_with_huggingface(prompt)

@@ -28,7 +28,7 @@ async def test_stt_uses_groq_when_backend_groq(monkeypatch):
 async def test_image_uses_comfyui_when_backend_comfyui(monkeypatch):
     monkeypatch.setattr(config, "IMAGE_BACKEND", "comfyui")
     seen = {}
-    async def fake_comfy(prompt, width=768, height=768):
+    async def fake_comfy(prompt, width=768, height=768, timeout_s=None):
         seen["wh"] = (width, height)
         return b"PNGBYTES"
     monkeypatch.setattr(image_gen.comfy_client, "generate_png", fake_comfy)

@@ -18,6 +18,10 @@ IMAGINE_FALLBACK_IMAGE = os.environ.get("IMAGINE_FALLBACK_IMAGE", "fallback.jpg"
 SPEACHES_BASE_URL = os.environ.get("SPEACHES_BASE_URL", "http://localhost:8001")
 SPEACHES_MODEL = os.environ.get("SPEACHES_MODEL", "Systran/faster-whisper-large-v3")
 COMFYUI_BASE_URL = os.environ.get("COMFYUI_BASE_URL", "http://localhost:8188")
+# Max seconds line_art waits for ComfyUI before giving up (and using the fallback image).
+# Keep this BELOW the gateway's IMAGINE_TIMEOUT_MS (default 90 s) so line_art always
+# resolves (image or fallback) before the gateway times out the request.
+COMFYUI_TIMEOUT_S = float(os.environ.get("COMFYUI_TIMEOUT_S", "60"))
 
 # Cloud backends: Groq Whisper for STT, HuggingFace FLUX for image generation.
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
