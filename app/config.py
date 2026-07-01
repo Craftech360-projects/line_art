@@ -9,6 +9,10 @@ IMAGE_BACKEND = os.environ.get("IMAGE_BACKEND", "hf").lower()
 # MODERATION_BACKEND: "groq" (LLM child-safety check) | "off" (keyword filter only).
 # Separate from GROQ_API_KEY so you can disable moderation WITHOUT breaking Groq STT.
 MODERATION_BACKEND = os.environ.get("MODERATION_BACKEND", "groq").lower()
+# Fallback image served when image GENERATION fails (e.g. ComfyUI/HF down), so the device
+# still gets a picture. Path is relative to the server's working dir. Empty = no fallback
+# (the error propagates). Safety blocks are NEVER replaced by the fallback.
+IMAGINE_FALLBACK_IMAGE = os.environ.get("IMAGINE_FALLBACK_IMAGE", "fallback.jpg")
 
 # Local providers (used when the backends above are set to local/comfyui).
 SPEACHES_BASE_URL = os.environ.get("SPEACHES_BASE_URL", "http://localhost:8001")

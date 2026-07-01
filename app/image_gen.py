@@ -256,5 +256,17 @@ async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
         raise ValueError(f"safety_block: {reason}")
     # 4:3 landscape matches the 320x240 LCD (fills screen, no crop). 512x384 keeps FLUX
     # fast enough for the device's response window while staying sharp after downscale.
-    image_bytes = await _generate_image_bytes(prompt, width=512, height=384)
+    try:
+        image_bytes = await _generate_image_bytes(prompt, width=512, height=384)
+    except Exception as e:
+        # Generation backend failed (e.g. ComfyUI/HF unreachable). Serve the fallback
+        # image so the device still shows something. (Safety blocks are raised above and
+        # never reach here, so unsafe prompts are never replaced by the fallback.)
+        fallback = config.IMAGINE_FALLBACK_IMAGE
+        if fallback and os.path.exists(fallback):
+            logger.warning("Imagine generation failed (%s); serving fallback %s", e, fallback)
+            with open(fallback, "rb") as fh:
+                image_bytes = fh.read()
+        else:
+            raise
     return to_device_jpeg(image_bytes), prompt
