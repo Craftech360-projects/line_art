@@ -37,7 +37,10 @@ def test_build_imagine_prompt_is_colorful_and_child_safe():
 async def test_generate_imagine_jpeg_returns_jpeg_and_prompt(monkeypatch):
     async def fake_hf(prompt: str, width=None, height=None) -> bytes:
         return _solid_png(800, 600)
+    async def fake_safe(subject, client=None):
+        return True, ""
     monkeypatch.setattr(image_gen, "generate_with_huggingface", fake_hf)
+    monkeypatch.setattr(image_gen.moderation, "is_prompt_safe", fake_safe)
 
     jpeg, prompt = await image_gen.generate_imagine_jpeg("a cat")
     assert Image.open(io.BytesIO(jpeg)).size == (320, 240)

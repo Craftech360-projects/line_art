@@ -10,6 +10,7 @@ import httpx
 from PIL import Image, ImageOps
 
 from app import config
+from app import moderation
 
 logger = logging.getLogger(__name__)
 
@@ -234,8 +235,11 @@ def to_device_jpeg(image_bytes: bytes) -> bytes:
 
 async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
     """Generate a color device JPEG for an imagine prompt. Returns (jpeg_bytes, prompt)."""
-    prompt = build_imagine_prompt(subject)
-    # Ask FLUX for a 4:3 landscape so it matches the 320x240 LCD — fills the screen,
-    # no crop and no letterbox bars.
-    image_bytes = await generate_with_huggingface(prompt, width=1024, height=768)
+    prompt = build_imagine_prompt(subject)  # keyword safety pass (may raise safety_block)
+    safe, reason = await moderation.is_prompt_safe(subject)  # LLM safety pass (multilingual)
+    if not safe:
+        raise ValueError(f"safety_block: {reason}")
+    # 4:3 landscape matches the 320x240 LCD (fills screen, no crop). 512x384 keeps FLUX
+    # fast enough for the device's response window while staying sharp after downscale.
+    image_bytes = await generate_with_huggingface(prompt, width=512, height=384)
     return to_device_jpeg(image_bytes), prompt
