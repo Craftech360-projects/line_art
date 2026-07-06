@@ -4,6 +4,10 @@
 set -euo pipefail
 cd /opt/line_art
 
+echo "==> pull latest main"
+git fetch origin main
+git reset --hard origin/main
+
 echo "==> python venv + deps"
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
