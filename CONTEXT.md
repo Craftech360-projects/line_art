@@ -17,6 +17,22 @@ Glossary for the AI Imagine feature. Terms only — no implementation detail.
   image-generation pipeline (Whisper + FLUX/ComfyUI). Originally built for the **AI Printer**
   (1-bit monochrome bitmaps). AI Imagine reuses its STT + image generation.
 
+## STT providers
+
+- **STT provider** — a speech-to-text vendor line_art can transcribe through (e.g.
+  `groq`, `deepgram`, `sarvam`). _Avoid_: "STT backend" for the vendor — reserve backend
+  for the old local/cloud env switch.
+- **Active provider** — the single STT provider the `manager-api` marks `is_active`,
+  read by line_art via `GET /providers/active`. Admin-selected and **shared with the
+  picoclaw voice agent** (same `stt_providers` row).
+- **Last-resort provider** — the fixed, self-contained STT provider configured in
+  line_art's own env (Groq). The single fallback used whenever the active provider can't
+  serve: its own hard failure, a manager-api outage, or an active provider line_art has
+  no adapter for. _Avoid_: "default provider".
+- **Hard failure** — an STT failure that triggers fallback: connection error, timeout,
+  HTTP 5xx, 429, or auth error. A `200` with empty/garbage text is **not** a hard failure
+  — it is treated as **no speech**.
+
 ## Features
 
 - **AI Chat** — the existing real-time voice conversation. Device → gateway → LiveKit →
