@@ -246,36 +246,6 @@ class TestClient:
                 message = mqtt_message_queue.get(timeout=remaining)
             except Empty:
                 continue
-
-            msg_type = message.get("type")
-            if msg_type in expected_types:
-                logger.info("[GW->MQTT] Matched message type=%s", msg_type)
-                return message
-
-            logger.info("[GW->MQTT] Ignoring message type=%s while waiting for %s", msg_type, sorted(expected_types))
-
-        return None
-
-    def send_rfid_card_lookup(
-        self,
-        rfid_uid: str,
-        local_version: Optional[str] = None,
-        local_content_hash: Optional[str] = None,
-        local_skill_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> Optional[Dict]:
-        """Send a card_lookup payload that exercises tap analytics and version handshake."""
-        payload = {
-            "type": "card_lookup",
-            "event_id": f"lookup_{uuid.uuid4().hex[:12]}",
-            "session_id": session_id,
-            "rfid_uid": rfid_uid,
-            "mac_address": self.device_mac_formatted,
-            "tap_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        if local_skill_id:
-            payload["local_skill_id"] = local_skill_id
-        if local_version is not None:
             payload["local_version"] = str(local_version)
         if local_content_hash is not None:
             payload["local_content_hash"] = str(local_content_hash)
