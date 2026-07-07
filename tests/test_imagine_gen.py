@@ -27,6 +27,20 @@ def test_to_device_jpeg_center_crops_to_4_3():
     assert Image.open(io.BytesIO(data)).size == (320, 240)
 
 
+def test_clean_subject_strips_greetings_and_request_phrasing():
+    assert image_gen._clean_subject("Hello, can you draw a cat?") == "a cat"
+    assert image_gen._clean_subject("can you draw a image of a storyteller") == "a storyteller"
+    assert image_gen._clean_subject("hey draw me a dragon") == "a dragon"
+
+
+def test_theme_never_repeats_consecutively():
+    prev = None
+    for _ in range(50):
+        theme = image_gen._pick_theme()
+        assert theme != prev
+        prev = theme
+
+
 def test_build_imagine_prompt_is_colorful_and_child_safe():
     p = image_gen.build_imagine_prompt("  a blue dog  ")
     assert "a blue dog" in p

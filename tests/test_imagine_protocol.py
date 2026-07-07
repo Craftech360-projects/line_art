@@ -22,7 +22,7 @@ class FakeWS:
 async def test_imagine_session_emits_image_without_print_confirm():
     inbound = [
         {"type": "websocket.receive", "text": '{"type":"listen","state":"start"}'},
-        {"type": "websocket.receive", "bytes": b"\x01\x02"},
+        *[{"type": "websocket.receive", "bytes": b"\x01\x02"}] * 6,
         {"type": "websocket.receive", "text": '{"type":"listen","state":"stop"}'},
         {"type": "websocket.disconnect"},
     ]
@@ -55,11 +55,37 @@ async def test_imagine_session_emits_image_without_print_confirm():
 
 
 @pytest.mark.asyncio
+async def test_too_short_utterance_skips_stt_and_sends_error():
+    # A knob-tap blip (1 frame) must NOT reach Whisper (it hallucinates "Thank you.")
+    inbound = [
+        {"type": "websocket.receive", "text": '{"type":"listen","state":"start"}'},
+        {"type": "websocket.receive", "bytes": b"\x01"},
+        {"type": "websocket.receive", "text": '{"type":"listen","state":"stop"}'},
+        {"type": "websocket.disconnect"},
+    ]
+    ws = FakeWS(inbound)
+
+    async def fake_transcribe(wav):
+        raise AssertionError("STT must not run on a too-short utterance")
+
+    async def fake_generate(subject):
+        raise AssertionError("generation must not run on a too-short utterance")
+
+    await device_protocol.handle_device_session(
+        ws, {"type": "hello", "feature": "ai_imagine"},
+        transcribe=fake_transcribe, decode=lambda f: b"WAV", generate_imagine=fake_generate,
+    )
+    types = [m["type"] for m in ws.sent]
+    assert "line_art_error" in types
+    assert "image" not in types
+
+
+@pytest.mark.asyncio
 async def test_chat_printer_path_unchanged_still_requires_confirm():
     # No feature flag -> classic path: transcription, then NOTHING until print_confirm.
     inbound = [
         {"type": "websocket.receive", "text": '{"type":"listen","state":"start"}'},
-        {"type": "websocket.receive", "bytes": b"\x01"},
+        *[{"type": "websocket.receive", "bytes": b"\x01"}] * 6,
         {"type": "websocket.receive", "text": '{"type":"listen","state":"stop"}'},
         {"type": "websocket.disconnect"},
     ]

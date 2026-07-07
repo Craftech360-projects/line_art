@@ -60,7 +60,7 @@ async def test_empty_transcript_emits_error_not_line_art():
 
     events = [
         _text({"type": "listen", "state": "start"}),
-        _bytes(b"x"),
+        *[_bytes(b"x")] * 6,
         _text({"type": "listen", "state": "stop"}),
     ]
     ws = FakeWS(events)
@@ -118,7 +118,7 @@ async def test_generate_failure_emits_error():
 
     events = [
         _text({"type": "listen", "state": "start"}),
-        _bytes(b"x"),
+        *[_bytes(b"x")] * 6,
         _text({"type": "listen", "state": "stop"}),
         _text({"type": "print_confirm"}),
     ]
@@ -148,7 +148,7 @@ async def test_transcription_waits_for_confirm_then_generates():
 
     events = [
         _text({"type": "listen", "state": "start"}),
-        _bytes(b"op"),
+        *[_bytes(b"op")] * 6,
         _text({"type": "listen", "state": "stop"}),
         _confirm(),
     ]
@@ -178,7 +178,7 @@ async def test_transcription_alone_does_not_generate():
 
     events = [
         _text({"type": "listen", "state": "start"}),
-        _bytes(b"op"),
+        *[_bytes(b"op")] * 6,
         _text({"type": "listen", "state": "stop"}),
         # no confirm -> session ends
     ]
@@ -204,7 +204,7 @@ async def test_reject_sends_nothing_and_does_not_generate():
 
     events = [
         _text({"type": "listen", "state": "start"}),
-        _bytes(b"op"),
+        *[_bytes(b"op")] * 6,
         _text({"type": "listen", "state": "stop"}),
         _reject(),
     ]
@@ -236,10 +236,10 @@ async def test_new_audio_voids_pending_then_confirm_uses_new_text():
 
     events = [
         _text({"type": "listen", "state": "start"}),   # first utterance
-        _bytes(b"op"),
+        *[_bytes(b"op")] * 6,
         _text({"type": "listen", "state": "stop"}),     # -> transcribe "old fox"
         _text({"type": "listen", "state": "start"}),     # NEW audio voids "old fox"
-        _bytes(b"op2"),
+        *[_bytes(b"op2")] * 6,
         _text({"type": "listen", "state": "stop"}),      # -> transcribe "new owl"
         _confirm(),                                       # confirm -> generate "new owl"
     ]

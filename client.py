@@ -22,9 +22,9 @@ import opuslib
 
 # --- Configuration ---
 
-SERVER_IP = "64.227.170.31"
+SERVER_IP = "192.168.0.59"
 OTA_PORT = 8002
-MQTT_BROKER_HOST ="64.227.170.31"
+MQTT_BROKER_HOST ="192.168.0.59"
 
 
 MQTT_BROKER_PORT = int(os.getenv("TEST_MQTT_BROKER_PORT", "1883"))
@@ -623,7 +623,8 @@ class TestClient:
             # Wait a moment for connection to establish
             time.sleep(2)
 
-            # Check if connected            if self.mqtt_client.is_connected():
+            # Check if connected
+            if self.mqtt_client.is_connected():
                 logger.info("[OK] MQTT client is connected!")
             else:
                 logger.warning(
@@ -652,6 +653,8 @@ class TestClient:
             },
             "features": ["tts", "asr", "vad"]
         }
+        if getattr(self, "imagine_mode", False):
+            hello_message["feature"] = "ai_imagine"
         self.mqtt_client.publish("device-server", json.dumps(hello_message))
         try:
             response = mqtt_message_queue.get(timeout=30)
@@ -1016,6 +1019,60 @@ class TestClient:
         self.trigger_conversation()
         self.cleanup()
 
+    def run_imagine_test(self):
+        """AI Imagine flow: record mic, send speech_end, wait for image URL.
+
+        Contract (ai-imagine-firmware-notes.md): no TTS greeting — the device
+        sends listen{start,manual}, streams audio, then speech_end triggers
+        STT + generation. Terminal message is image{url} or image_error.
+        """
+        if not self.get_ota_config():
+            return
+        if not self.connect_mqtt():
+            return
+        time.sleep(1)
+        if not self.send_hello_and_get_session():
+            self.cleanup()
+            return
+
+        session_id = udp_session_details["session_id"]
+        stop_threads.clear()
+        start_recording_event.clear()
+        stop_recording_event.clear()
+        self.audio_recording_thread = threading.Thread(
+            target=self._record_and_send_audio_thread, daemon=True)
+        self.audio_recording_thread.start()
+
+        self.publish_device_message(
+            {"type": "listen", "session_id": session_id, "state": "start", "mode": "manual"})
+        start_recording_event.set()
+        logger.info("[IMAGINE] >>> SPEAK YOUR IMAGE PROMPT NOW <<<")
+        input("[IMAGINE] Press Enter when done speaking...\n")
+        stop_recording_event.set()
+        self.publish_device_message(
+            {"type": "speech_end", "session_id": session_id})
+
+        # ponytail: single 95s wait (server budget is 90s), no retries
+        deadline = time.time() + 95
+        while time.time() < deadline:
+            msg = self.wait_for_message(
+                {"image_status", "image", "image_error"},
+                timeout=max(1, int(deadline - time.time())))
+            if msg is None:
+                logger.error("[IMAGINE] Timed out waiting for image.")
+                break
+            if msg["type"] == "image_status":
+                logger.info("[IMAGINE] Status: %s", msg.get("state"))
+                continue
+            if msg["type"] == "image":
+                logger.info("[IMAGINE] SUCCESS! caption=%r url=%s",
+                            msg.get("caption"), msg.get("url"))
+            else:
+                logger.error("[IMAGINE] FAILED: code=%s message=%s",
+                             msg.get("code"), msg.get("message"))
+            break
+        self.cleanup()
+
     def run_rfid_test(
         self,
         rfid_uid: str,
@@ -1068,9 +1125,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--mode",
-        choices=["voice", "rfid"],
+        choices=["voice", "rfid", "imagine"],
         default="voice",
-        help="Test mode to run. RFID mode requires --rfid-uid.",
+        help="Test mode to run. RFID mode requires --rfid-uid. Imagine: record a prompt, get an image URL back.",
     )
     parser.add_argument("--device-mac", default=os.getenv("TEST_DEVICE_MAC", "00:16:3e:ac:b5:38"))
     parser.add_argument("--rfid-uid", default=os.getenv("TEST_RFID_UID"))
@@ -1086,8 +1143,11 @@ if __name__ == "__main__":
     print(f"[STATS] Log frequency: Every {LOG_SEQUENCE_EVERY_N_PACKETS} packets")
 
     client = TestClient(device_mac=args.device_mac)
+    client.imagine_mode = args.mode == "imagine"
     try:
-        if args.mode == "voice":
+        if args.mode == "imagine":
+            client.run_imagine_test()
+        elif args.mode == "voice":
             client.run_test()
         else:
             if not args.rfid_uid:

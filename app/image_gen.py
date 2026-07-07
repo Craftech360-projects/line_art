@@ -2,6 +2,7 @@ import base64
 import io
 import logging
 import os
+import random
 import re
 import time
 from pathlib import Path
@@ -155,9 +156,22 @@ async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
 DEVICE_W, DEVICE_H = 320, 240
 MAX_JPEG_BYTES = 200 * 1024
 
+# One of these child-friendly art themes is picked at random per generation,
+# so repeated prompts don't all come out in the same look.
+IMAGINE_THEMES = [
+    "bright cartoon style, simple shapes, clean plain background",
+    "cute claymation style, colorful plasticine clay figures, soft 3D look, plain background",
+    "cute kawaii style, rounded chubby shapes, big friendly eyes, pastel plain background",
+    "colorful paper-cutout collage style, bold simple shapes, plain background",
+    "cute 3D animated movie style, soft rounded characters, glossy colorful render, plain background",
+    "soft felt plush toy style, fuzzy fabric texture, stitched details, plain background",
+    "colorful pixel art style, chunky retro video game sprites, plain background",
+    "child's crayon drawing style, waxy bright strokes, drawn on white paper",
+]
+
 IMAGINE_PROMPT_TEMPLATE = (
     "a colorful, friendly children's illustration of {subject}, "
-    "bright cartoon style, simple shapes, clean plain background, cheerful, safe for kids, "
+    "{theme}, cheerful, safe for kids, "
     "no text, no words, no letters, no captions, no writing, no signature"
 )
 
@@ -165,13 +179,14 @@ IMAGINE_PROMPT_TEMPLATE = (
 # utterance to FLUX makes it render those words into the picture, so strip the leading
 # request phrasing down to the actual subject ("a beautiful cat").
 _SUBJECT_PREFIXES = [
+    "hello", "hi", "hey", "okay", "ok",
     "can you please", "can you", "could you", "would you", "will you",
     "please draw me", "please draw", "please make", "please show me", "please",
     "i want you to draw", "i want a picture of", "i want to see", "i want",
     "i would like", "i'd like", "draw me a picture of", "draw me", "draw a picture of",
     "draw", "make me", "make a picture of", "make", "show me a picture of",
     "show me", "create a picture of", "create", "generate", "paint", "a picture of",
-    "picture of", "image of",
+    "picture of", "a image of", "an image of", "image of",
 ]
 
 
@@ -183,8 +198,9 @@ def _clean_subject(subject: str) -> str:
     while changed:
         changed = False
         for pref in _SUBJECT_PREFIXES:
-            if low.startswith(pref + " "):
-                s = s[len(pref) + 1:].strip()
+            # match "hello can you" and "hello, can you" alike
+            if low.startswith(pref + " ") or low.startswith(pref + ","):
+                s = s[len(pref) + 1:].lstrip(" ,").strip()
                 low = s.lower()
                 changed = True
                 break
@@ -222,10 +238,23 @@ def _assert_child_safe(subject: str) -> None:
             f"safety_block: subject not allowed for children ({', '.join(sorted(hits))})")
 
 
+_last_theme = None
+
+
+def _pick_theme() -> str:
+    """Random theme, but never the same one twice in a row."""
+    global _last_theme
+    theme = random.choice([t for t in IMAGINE_THEMES if t != _last_theme])
+    _last_theme = theme
+    return theme
+
+
 def build_imagine_prompt(subject: str) -> str:
     cleaned = _clean_subject(subject)
     _assert_child_safe(cleaned)
-    return IMAGINE_PROMPT_TEMPLATE.format(subject=cleaned)
+    theme = _pick_theme()
+    logger.info("[imagine] theme picked: %r", theme)
+    return IMAGINE_PROMPT_TEMPLATE.format(subject=cleaned, theme=theme)
 
 
 def to_device_jpeg(image_bytes: bytes) -> bytes:
@@ -253,13 +282,18 @@ def to_device_jpeg(image_bytes: bytes) -> bytes:
 async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
     """Generate a color device JPEG for an imagine prompt. Returns (jpeg_bytes, prompt)."""
     prompt = build_imagine_prompt(subject)  # keyword safety pass (may raise safety_block)
+    logger.info("[imagine] subject=%r -> prompt=%r", subject, prompt)
     safe, reason = await moderation.is_prompt_safe(subject)  # LLM safety pass (multilingual)
+    logger.info("[imagine] moderation verdict: safe=%s reason=%r", safe, reason)
     if not safe:
         raise ValueError(f"safety_block: {reason}")
     # 4:3 landscape matches the 320x240 LCD (fills screen, no crop). 512x384 keeps FLUX
     # fast enough for the device's response window while staying sharp after downscale.
+    t0 = time.time()
     try:
         image_bytes = await _generate_image_bytes(prompt, width=512, height=384)
+        logger.info("[imagine] backend=%s returned %d bytes in %.1fs",
+                    config.IMAGE_BACKEND, len(image_bytes), time.time() - t0)
     except Exception as e:
         # Generation backend failed (e.g. ComfyUI/HF unreachable). Serve the fallback
         # image so the device still shows something. (Safety blocks are raised above and
@@ -271,4 +305,7 @@ async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
                 image_bytes = fh.read()
         else:
             raise
-    return to_device_jpeg(image_bytes), prompt
+    jpeg = to_device_jpeg(image_bytes)
+    logger.info("[imagine] device JPEG ready: %d bytes (%dx%d letterboxed)",
+                len(jpeg), DEVICE_W, DEVICE_H)
+    return jpeg, prompt

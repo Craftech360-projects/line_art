@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 SAVE_DEVICE_AUDIO = os.environ.get("SAVE_DEVICE_AUDIO", "").lower() in ("1", "true", "yes")
 _AUDIO_DIR = Path("debug_audio")
 
+# Whisper hallucinates phrases ("Thank you.", "you") on near-silent blips, and each one
+# costs a full image generation. Frames are ~60ms opus packets, so 5 ≈ 300ms — shorter
+# than any real utterance. ponytail: fixed floor; make smarter (RMS check) if it misfires.
+MIN_UTTERANCE_FRAMES = int(os.environ.get("MIN_UTTERANCE_FRAMES", "5"))
+
 
 def _save_debug_wav(session_id: str, wav_bytes: bytes) -> None:
     try:
@@ -38,6 +43,12 @@ def _save_debug_wav(session_id: str, wav_bytes: bytes) -> None:
 async def _transcribe_and_prompt(ws, session_id, opus_frames, transcribe, decode):
     """Decode + transcribe; send line_art_transcription. Returns the text to
     print (the pending prompt), or None if STT was empty/failed (error sent)."""
+    if len(opus_frames) < MIN_UTTERANCE_FRAMES:
+        logger.info("[session %s] utterance too short (%d frames < %d) — skipping STT",
+                    session_id[:8], len(opus_frames), MIN_UTTERANCE_FRAMES)
+        await ws.send_json(dm.line_art_error(
+            "Could not transcribe any speech from audio.", stage="stt", session_id=session_id))
+        return None
     try:
         wav = decode(opus_frames)
         if SAVE_DEVICE_AUDIO:
@@ -75,14 +86,20 @@ async def _generate_imagine_and_send(ws, session_id, text, generate_imagine):
     send it as an `image` message. The gateway uploads it and builds image{url}."""
     await ws.send_json(dm.line_art_progress(
         f"Imagining '{text}'...", stage="image_gen", session_id=session_id))
+    logger.info("[imagine %s] generation started for %r", session_id[:8], text)
+    t0 = time.time()
     try:
         jpeg, _prompt = await generate_imagine(text)
     except Exception as e:
-        logger.exception("Imagine generation failed")
+        logger.exception("[imagine %s] generation FAILED after %.1fs", session_id[:8], time.time() - t0)
         await ws.send_json(dm.line_art_error(str(e), stage="image_gen", session_id=session_id))
         return
     image_b64 = base64.b64encode(jpeg).decode()
     await ws.send_json(dm.image(image_b64, 320, 240, caption=text, session_id=session_id))
+    logger.info(
+        "[imagine %s] image message SENT to gateway: jpeg=%d bytes b64=%d chars (%.1fs total). "
+        "Upload to S3 happens gateway-side (manager-api) per ADR-0001 — check gateway logs next.",
+        session_id[:8], len(jpeg), len(image_b64), time.time() - t0)
 
 
 async def handle_device_session(
@@ -98,7 +115,8 @@ async def handle_device_session(
     session_id = uuid.uuid4().hex
     imagine = first_message.get("feature") == "ai_imagine"
     await ws.send_json(dm.hello_reply(session_id))
-    logger.info("Device session %s started", session_id)
+    logger.info("Device session %s started (mode=%s)",
+                session_id, "imagine" if imagine else "printer")
 
     listening = False
     disconnected = False
@@ -127,10 +145,13 @@ async def handle_device_session(
                         listening = True
                         opus_frames = []
                         pending_text = None  # new audio voids any un-confirmed prompt
+                        logger.info("[session %s] listen start — buffering audio", session_id[:8])
                     elif state == "stop":
                         if not listening:
                             continue
                         listening = False
+                        logger.info("[session %s] listen stop — %d opus frames buffered, transcribing...",
+                                    session_id[:8], len(opus_frames))
                         text = await _transcribe_and_prompt(
                             ws, session_id, opus_frames, transcribe, decode,
                         )
