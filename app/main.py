@@ -56,6 +56,11 @@ app = FastAPI(title="Line Art Generator", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 async def send_json(ws: WebSocket, msg):
     await ws.send_text(msg.model_dump_json())
 
