@@ -68,9 +68,28 @@ async def _speaches(cfg: ProviderConfig, audio: bytes, client=None) -> str:
     return await _with_client(client, call)
 
 
+async def _deepgram(cfg: ProviderConfig, audio: bytes, client=None) -> str:
+    params = {"model": cfg.model or "nova-2", "smart_format": "true"}
+    if cfg.language:
+        params["language"] = cfg.language
+    async def call(c: httpx.AsyncClient) -> str:
+        resp = await c.post(
+            "https://api.deepgram.com/v1/listen",
+            headers={"Authorization": f"Token {cfg.api_key}",
+                     "Content-Type": "audio/wav"},
+            params=params,
+            content=audio,
+        )
+        _check(resp)
+        alts = resp.json().get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])
+        return (alts[0].get("transcript", "") if alts else "").strip()
+    return await _with_client(client, call)
+
+
 ADAPTERS = {
     "groq": _groq,
     "speaches": _speaches,
+    "deepgram": _deepgram,
 }
 
 
