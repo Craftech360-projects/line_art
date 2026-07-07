@@ -4,24 +4,12 @@ from app import stt, image_gen, config
 
 
 @pytest.mark.asyncio
-async def test_stt_uses_speaches_when_backend_local(monkeypatch):
-    monkeypatch.setattr(config, "STT_BACKEND", "local")
-    async def fake_speaches(audio, client=None):
-        return "from speaches"
-    async def fake_groq(audio, client=None):
-        raise AssertionError("Groq must not be called in local mode")
-    monkeypatch.setattr(stt, "_transcribe_speaches", fake_speaches)
-    monkeypatch.setattr(stt, "_transcribe_groq", fake_groq)
-    assert await stt.transcribe(b"wav") == "from speaches"
-
-
-@pytest.mark.asyncio
-async def test_stt_uses_groq_when_backend_groq(monkeypatch):
-    monkeypatch.setattr(config, "STT_BACKEND", "groq")
-    async def fake_groq(audio, client=None):
-        return "from groq"
-    monkeypatch.setattr(stt, "_transcribe_groq", fake_groq)
-    assert await stt.transcribe(b"wav") == "from groq"
+async def test_last_resort_config_defaults_to_groq(monkeypatch):
+    monkeypatch.setattr(config, "STT_LAST_RESORT_PROVIDER", "groq")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "gk")
+    monkeypatch.setattr(config, "GROQ_MODEL", "whisper-large-v3")
+    cfg = stt._last_resort_config()
+    assert cfg.provider == "groq" and cfg.api_key == "gk"
 
 
 @pytest.mark.asyncio
