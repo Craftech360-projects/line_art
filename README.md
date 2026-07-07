@@ -126,6 +126,14 @@ SAVE_DEVICE_AUDIO=1      # dump each utterance's decoded WAV to debug_audio/
 MONO_THRESHOLD=190       # 1-bit cutoff (higher = bolder lines; default 190)
 ```
 
+### Multi-provider STT
+
+The primary STT provider is resolved from cheeko-backend's manager-api `GET /providers/active`
+(cached for `STT_PROVIDER_TTL_S` seconds). On hard failures (HTTP 5xx, timeouts, connection
+errors), the app falls back to `STT_LAST_RESORT_PROVIDER` (fixed in `.env`). See
+[`docs/adr/0002-stt-provider-selection-via-manager-api.md`](docs/adr/0002-stt-provider-selection-via-manager-api.md)
+for details.
+
 The server also saves a copy of every generated image to `generated_images/`
 (both the full-colour FLUX PNG and the 1-bit mono PNG the device prints).
 
