@@ -81,7 +81,8 @@ async def _deepgram(cfg: ProviderConfig, audio: bytes, client=None) -> str:
             content=audio,
         )
         _check(resp)
-        alts = resp.json().get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])
+        channels = resp.json().get("results", {}).get("channels") or []
+        alts = (channels[0].get("alternatives") or []) if channels else []
         return (alts[0].get("transcript", "") if alts else "").strip()
     return await _with_client(client, call)
 

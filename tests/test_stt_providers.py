@@ -89,3 +89,14 @@ async def test_deepgram_5xx_is_hard_failure():
     async with _client(handler) as c:
         with pytest.raises(STTHardFailure):
             await sp.transcribe_with(cfg, b"wav", c)
+
+
+@pytest.mark.asyncio
+async def test_deepgram_empty_channels_returns_empty():
+    cfg = ProviderConfig(provider="deepgram", model="nova-2", language="", api_key="dk")
+
+    def handler(request):
+        return httpx.Response(200, json={"results": {"channels": []}})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == ""
