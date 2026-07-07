@@ -46,3 +46,6 @@ STT_LAST_RESORT_PROVIDER = os.environ.get("STT_LAST_RESORT_PROVIDER", "groq").lo
 # Extra keys so deepgram/sarvam can be the last-resort or used in dev.
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
+
+# Save every generated image to generated_images/ (children's data — default OFF in prod).
+SAVE_GENERATED_IMAGES = os.environ.get("SAVE_GENERATED_IMAGES", "").lower() in ("1", "true", "yes")

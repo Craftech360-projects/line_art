@@ -35,6 +35,8 @@ _IMAGE_DIR = Path("generated_images")
 
 
 def _save_copies(subject: str, full_png: bytes, mono_png: bytes) -> None:
+    if not config.SAVE_GENERATED_IMAGES:
+        return
     try:
         _IMAGE_DIR.mkdir(exist_ok=True)
         slug = re.sub(r"[^a-z0-9]+", "_", subject.strip().lower()).strip("_")[:40] or "image"

@@ -29,6 +29,8 @@ _INPUT_AUDIO_DIR = Path("debug_audio")
 
 
 def _save_input_wav(audio_bytes: bytes) -> None:
+    if not SAVE_INPUT_AUDIO:
+        return
     try:
         _INPUT_AUDIO_DIR.mkdir(exist_ok=True)
         path = _INPUT_AUDIO_DIR / f"{int(time.time())}_input.wav"
