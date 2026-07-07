@@ -92,6 +92,11 @@ async def _generate_imagine_and_send(ws, session_id, text, generate_imagine):
         jpeg, _prompt = await generate_imagine(text)
     except Exception as e:
         logger.exception("[imagine %s] generation FAILED after %.1fs", session_id[:8], time.time() - t0)
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(e)
+        except Exception:
+            pass
         await ws.send_json(dm.line_art_error(str(e), stage="image_gen", session_id=session_id))
         return
     image_b64 = base64.b64encode(jpeg).decode()

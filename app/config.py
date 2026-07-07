@@ -49,3 +49,7 @@ SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
 
 # Save every generated image to generated_images/ (children's data — default OFF in prod).
 SAVE_GENERATED_IMAGES = os.environ.get("SAVE_GENERATED_IMAGES", "").lower() in ("1", "true", "yes")
+
+# --- Sentry error reporting (optional) ---
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+SENTRY_ENV = os.environ.get("SENTRY_ENV", "production")

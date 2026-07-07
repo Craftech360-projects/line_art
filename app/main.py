@@ -41,6 +41,11 @@ def _save_input_wav(audio_bytes: bytes) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if config.SENTRY_DSN:
+        import sentry_sdk
+        sentry_sdk.init(dsn=config.SENTRY_DSN, environment=config.SENTRY_ENV,
+                        traces_sample_rate=0.0)
+        logger.info("Sentry error reporting enabled (env=%s)", config.SENTRY_ENV)
     if config.STT_BACKEND == "local":
         stt_desc = f"Speaches({config.SPEACHES_MODEL} @ {config.SPEACHES_BASE_URL})"
     else:
