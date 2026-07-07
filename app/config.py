@@ -33,3 +33,16 @@ HF_MODEL_URL = os.environ.get(
     "HF_MODEL_URL",
     "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
 )
+
+# --- Manager-api STT provider selection (ADR-0002) ---
+# Base URL of cheeko-backend manager-api. Empty => skip manager fetch, use last-resort only.
+MANAGER_API_BASE_URL = os.environ.get("MANAGER_API_BASE_URL", "").rstrip("/")
+# Service key for backend-to-backend auth (X-Service-Key -> requireAdmin god-mode).
+SERVICE_SECRET_KEY = os.environ.get("SERVICE_SECRET_KEY", "")
+# How long line_art caches the active provider before refetching (seconds).
+STT_PROVIDER_TTL_S = float(os.environ.get("STT_PROVIDER_TTL_S", "300"))
+# Fixed env last-resort provider used when the active provider can't serve.
+STT_LAST_RESORT_PROVIDER = os.environ.get("STT_LAST_RESORT_PROVIDER", "groq").lower()
+# Extra keys so deepgram/sarvam can be the last-resort or used in dev.
+DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
