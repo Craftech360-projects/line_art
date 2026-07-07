@@ -53,3 +53,7 @@ SAVE_GENERATED_IMAGES = os.environ.get("SAVE_GENERATED_IMAGES", "").lower() in (
 # --- Sentry error reporting (optional) ---
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 SENTRY_ENV = os.environ.get("SENTRY_ENV", "production")
+
+# If set, /ws device sessions must present a matching `auth` in the hello. Empty =>
+# rely on network isolation (see ADR-0003). The gateway must send the same value.
+WS_SHARED_SECRET = os.environ.get("WS_SHARED_SECRET", "")

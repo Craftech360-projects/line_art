@@ -117,6 +117,11 @@ async def handle_device_session(
     decode=opus_decode.decode_opus_to_wav,
 ) -> None:
     """Drive one device session. `first_message` is the parsed device hello."""
+    from app import config as _cfg
+    if _cfg.WS_SHARED_SECRET and first_message.get("auth") != _cfg.WS_SHARED_SECRET:
+        logger.warning("Rejected device hello: bad/missing auth")
+        await ws.close(code=1008)
+        return
     session_id = uuid.uuid4().hex
     imagine = first_message.get("feature") == "ai_imagine"
     await ws.send_json(dm.hello_reply(session_id))
