@@ -3,7 +3,11 @@ import pytest
 from app import image_gen
 
 
-def test_command_prefix_is_stripped_from_subject():
+def test_command_prefix_is_stripped_from_subject(monkeypatch):
+    # Pin the random theme: one of the 8 themes legitimately contains "drawing"/"drawn",
+    # which made the "draw not in prompt" assertion flaky (~1 in 8 runs).
+    monkeypatch.setattr(image_gen, "_pick_theme",
+                        lambda: "bright cartoon style, simple shapes, clean plain background")
     prompt = image_gen.build_imagine_prompt("can you draw a beautiful cat")
     assert "a beautiful cat" in prompt
     # The conversational/command words must not survive into the FLUX prompt.
