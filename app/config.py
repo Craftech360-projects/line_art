@@ -4,7 +4,6 @@ import os
 # STT_BACKEND:   "groq"  (cloud Whisper)      | "local" (Speaches server)
 # IMAGE_BACKEND: "hf"    (cloud FLUX via HF)  | "comfyui" (local ComfyUI server)
 # Defaults are CLOUD so nothing changes unless you opt in.
-STT_BACKEND = os.environ.get("STT_BACKEND", "groq").lower()
 IMAGE_BACKEND = os.environ.get("IMAGE_BACKEND", "hf").lower()
 # MODERATION_BACKEND: "groq" (LLM child-safety check) | "off" (keyword filter only).
 # Separate from GROQ_API_KEY so you can disable moderation WITHOUT breaking Groq STT.

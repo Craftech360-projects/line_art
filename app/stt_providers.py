@@ -117,5 +117,6 @@ async def transcribe_with(cfg: ProviderConfig, audio_bytes: bytes, client=None) 
     if adapter is None:
         raise STTHardFailure(f"no adapter for provider {cfg.provider!r}")
     text = await adapter(cfg, audio_bytes, client)
-    logger.info("STT[%s] -> %r", cfg.provider, text)
+    logger.info("STT[%s] -> %d chars", cfg.provider, len(text))
+    logger.debug("STT[%s] text: %r", cfg.provider, text)
     return text

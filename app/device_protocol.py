@@ -2,6 +2,7 @@
 and the line_art_* print message flow. See aiprinter-server-contract.md.
 """
 import base64
+import hmac
 import json
 import logging
 import os
@@ -118,10 +119,12 @@ async def handle_device_session(
 ) -> None:
     """Drive one device session. `first_message` is the parsed device hello."""
     from app import config as _cfg
-    if _cfg.WS_SHARED_SECRET and first_message.get("auth") != _cfg.WS_SHARED_SECRET:
-        logger.warning("Rejected device hello: bad/missing auth")
-        await ws.close(code=1008)
-        return
+    if _cfg.WS_SHARED_SECRET:
+        supplied = first_message.get("auth")
+        if not isinstance(supplied, str) or not hmac.compare_digest(supplied, _cfg.WS_SHARED_SECRET):
+            logger.warning("Rejected device hello: bad/missing auth")
+            await ws.close(code=1008)
+            return
     session_id = uuid.uuid4().hex
     imagine = first_message.get("feature") == "ai_imagine"
     await ws.send_json(dm.hello_reply(session_id))

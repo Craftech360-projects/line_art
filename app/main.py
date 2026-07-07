@@ -46,10 +46,11 @@ async def lifespan(app: FastAPI):
         sentry_sdk.init(dsn=config.SENTRY_DSN, environment=config.SENTRY_ENV,
                         traces_sample_rate=0.0)
         logger.info("Sentry error reporting enabled (env=%s)", config.SENTRY_ENV)
-    if config.STT_BACKEND == "local":
-        stt_desc = f"Speaches({config.SPEACHES_MODEL} @ {config.SPEACHES_BASE_URL})"
+    if config.MANAGER_API_BASE_URL:
+        stt_desc = (f"manager-api({config.MANAGER_API_BASE_URL}, ttl={config.STT_PROVIDER_TTL_S:.0f}s) "
+                    f"last-resort={config.STT_LAST_RESORT_PROVIDER}")
     else:
-        stt_desc = f"Groq({config.GROQ_MODEL})" + ("" if config.GROQ_API_KEY else " [GROQ_API_KEY missing!]")
+        stt_desc = f"last-resort only ({config.STT_LAST_RESORT_PROVIDER})"
     if config.IMAGE_BACKEND == "comfyui":
         img_desc = f"ComfyUI @ {config.COMFYUI_BASE_URL}"
     else:
