@@ -87,10 +87,28 @@ async def _deepgram(cfg: ProviderConfig, audio: bytes, client=None) -> str:
     return await _with_client(client, call)
 
 
+async def _sarvam(cfg: ProviderConfig, audio: bytes, client=None) -> str:
+    model = cfg.model or "saarika:v2"
+    files = {"file": ("audio.wav", audio, "audio/wav")}
+    data = {"model": model}
+    if model.startswith("saaras"):
+        url = "https://api.sarvam.ai/speech-to-text-translate"
+    else:
+        url = "https://api.sarvam.ai/speech-to-text"
+        data["language_code"] = cfg.language or "unknown"
+    async def call(c: httpx.AsyncClient) -> str:
+        resp = await c.post(url, headers={"api-subscription-key": cfg.api_key},
+                            files=files, data=data)
+        _check(resp)
+        return resp.json().get("transcript", "").strip()
+    return await _with_client(client, call)
+
+
 ADAPTERS = {
     "groq": _groq,
     "speaches": _speaches,
     "deepgram": _deepgram,
+    "sarvam": _sarvam,
 }
 
 

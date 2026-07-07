@@ -100,3 +100,32 @@ async def test_deepgram_empty_channels_returns_empty():
 
     async with _client(handler) as c:
         assert await sp.transcribe_with(cfg, b"wav", c) == ""
+
+
+@pytest.mark.asyncio
+async def test_sarvam_saaras_uses_translate_endpoint():
+    cfg = ProviderConfig(provider="sarvam", model="saaras:v3", language="", api_key="sk")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/speech-to-text-translate"
+        assert request.headers.get("api-subscription-key") == "sk"
+        return httpx.Response(200, json={"transcript": " ek billi "})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "ek billi"
+
+
+@pytest.mark.asyncio
+async def test_sarvam_saarika_uses_stt_endpoint_with_language():
+    cfg = ProviderConfig(provider="sarvam", model="saarika:v2", language="hi-IN", api_key="sk")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = request.content
+        return httpx.Response(200, json={"transcript": "namaste"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "namaste"
+    assert seen["path"] == "/speech-to-text"
+    assert b"hi-IN" in seen["body"]
