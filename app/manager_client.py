@@ -29,7 +29,7 @@ def _block(d: dict, key: str) -> ProviderConfig | None:
 
 def _parse(body: dict) -> dict:
     d = body.get("data") or body
-    return {"stt": _block(d, "stt"), "moderation": _block(d, "moderation")}
+    return {"stt": _block(d, "stt"), "moderation": _block(d, "moderation"), "image": _block(d, "image")}
 
 
 async def _fetch(client: httpx.AsyncClient) -> dict:
@@ -79,3 +79,8 @@ async def get_active_stt(client: httpx.AsyncClient | None = None,
 async def get_active_moderation(client: httpx.AsyncClient | None = None,
                                 now: float | None = None) -> ProviderConfig | None:
     return await _get_active("moderation", client, now)
+
+
+async def get_active_image(client: httpx.AsyncClient | None = None,
+                           now: float | None = None) -> ProviderConfig | None:
+    return await _get_active("image", client, now)

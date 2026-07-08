@@ -135,3 +135,23 @@ async def test_malformed_200_does_not_clobber_last_known_good():
     assert first.provider == "groq"
     assert stt is not None and stt.provider == "groq"    # last-known-good preserved
     assert mod is not None and mod.provider == "groq"
+
+
+@pytest.mark.asyncio
+async def test_image_block_is_parsed():
+    payload = {"data": {
+        "stt": {"provider": "groq", "api_key": "sk1"},
+        "image": {"provider": "runware", "model": "runware:400@4", "api_key": "rk"},
+    }}
+    async with _client(lambda r: httpx.Response(200, json=payload)) as c:
+        cfg = await mc.get_active_image(client=c, now=1000.0)
+    assert cfg.provider == "runware"
+    assert cfg.model == "runware:400@4"
+    assert cfg.api_key == "rk"
+
+
+@pytest.mark.asyncio
+async def test_missing_image_block_returns_none():
+    payload = {"data": {"stt": {"provider": "groq", "api_key": "sk1"}}}
+    async with _client(lambda r: httpx.Response(200, json=payload)) as c:
+        assert await mc.get_active_image(client=c, now=1000.0) is None
