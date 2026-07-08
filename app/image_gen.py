@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -31,6 +32,11 @@ TARGET_WIDTH = 384
 # fake gray and turns thin line art into broken/speckled lines; a threshold keeps
 # the lines solid and clean. Lower = fewer/lighter lines, higher = more/bolder.
 MONO_THRESHOLD = int(os.environ.get("MONO_THRESHOLD", "190"))
+
+# The whole provider chain must resolve inside the gateway's 90 s window so the
+# imagine path can still serve fallback.jpg in time. ponytail: single overall
+# deadline instead of per-adapter budgets.
+IMAGE_CHAIN_DEADLINE_S = float(os.environ.get("IMAGE_CHAIN_DEADLINE_S", "75"))
 
 # Every generation also saves a copy on the server: the original full-colour
 # FLUX PNG and the 1-bit mono PNG the device prints.
@@ -246,12 +252,17 @@ async def _generate_image_bytes(prompt: str, width: int | None = None,
         return await generate_with_huggingface(prompt)
 
     last_exc: Exception | None = None
-    for cfg in chain:
-        try:
-            return await generate_image_with(cfg, prompt, width=width, height=height)
-        except ImageGenUnavailable as e:
-            last_exc = e
-            logger.warning("Image provider %s unavailable: %s", cfg.provider, e)
+    try:
+        async with asyncio.timeout(IMAGE_CHAIN_DEADLINE_S):
+            for cfg in chain:
+                try:
+                    return await generate_image_with(cfg, prompt, width=width, height=height)
+                except ImageGenUnavailable as e:
+                    last_exc = e
+                    logger.warning("Image provider %s unavailable: %s", cfg.provider, e)
+    except TimeoutError:
+        raise RuntimeError(
+            f"Image chain deadline ({IMAGE_CHAIN_DEADLINE_S:.0f}s) exceeded; last error: {last_exc}")
     raise RuntimeError(f"All image providers failed: {last_exc}")
 
 

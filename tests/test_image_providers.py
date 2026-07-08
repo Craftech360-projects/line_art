@@ -118,3 +118,20 @@ async def test_chain_skips_keyless_active(monkeypatch):
     monkeypatch.setattr(image_gen, "generate_image_with", fake_gen)
     await image_gen._generate_image_bytes("a cat")
     assert calls == [("hf", "envtoken")]  # keyless active skipped, env last resort used
+
+
+@pytest.mark.asyncio
+async def test_chain_deadline_bounds_slow_providers(monkeypatch):
+    import asyncio as _asyncio
+    monkeypatch.setattr(config, "IMAGE_BACKEND", "hf")
+    monkeypatch.setattr(config, "HF_API_TOKEN", "envtoken")
+    monkeypatch.setattr(image_gen, "IMAGE_CHAIN_DEADLINE_S", 0.05)
+    async def no_active(client=None, now=None):
+        return None
+    monkeypatch.setattr(image_gen.manager_client, "get_active_image", no_active)
+    async def hang(cfg, prompt, width=None, height=None, client=None):
+        await _asyncio.sleep(5)
+    monkeypatch.setattr(image_gen, "generate_image_with", hang)
+    with pytest.raises(RuntimeError) as exc:
+        await image_gen._generate_image_bytes("a cat")
+    assert "deadline" in str(exc.value)

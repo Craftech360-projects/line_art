@@ -54,7 +54,8 @@ async def lifespan(app: FastAPI):
     if config.IMAGE_BACKEND == "comfyui":
         img_desc = f"ComfyUI @ {config.COMFYUI_BASE_URL}"
     else:
-        img_desc = "HuggingFace FLUX" + ("" if config.HF_API_TOKEN else " [HF_API_TOKEN missing!]")
+        img_desc = "manager-api-selected (env HF last resort)" if config.HF_API_TOKEN \
+            else "manager-api-selected (no env last resort)"
     if config.MODERATION_BACKEND == "off":
         mod_desc = "off (keyword-only)"
     else:
