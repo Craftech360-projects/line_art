@@ -1,18 +1,20 @@
 """LLM child-safety moderation for AI Imagine prompts.
 
-A second layer on top of the keyword filter in image_gen._assert_child_safe. An LLM
-classifier is multilingual and catches obfuscation / phrasing the keyword list misses.
-Reuses the existing Groq API key (same account used for STT).
+A second layer on top of the keyword filter in image_gen._assert_child_safe.
+The active provider comes from manager-api (moderation_providers table); the
+env-configured Groq setup is the fixed last resort. All providers share the
+same verdict contract; the whole layer FAILS OPEN (keyword filter remains the
+backstop) so a provider outage degrades rather than blocking every image.
 """
 import logging
 
 import httpx
 
 from app import config
+from app import manager_client
+from app.stt_providers import ProviderConfig
 
 logger = logging.getLogger(__name__)
-
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _SYSTEM = (
     "You are a strict content-safety filter for an image generator used by children "
@@ -24,20 +26,23 @@ _SYSTEM = (
     "SAFE or UNSAFE."
 )
 
+_CHAT_URLS = {
+    "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+}
+_OPENAI_MODERATION_URL = "https://api.openai.com/v1/moderations"
 
-async def is_prompt_safe(subject: str, client: httpx.AsyncClient | None = None) -> tuple[bool, str]:
-    """Return (True, "") if the subject is child-safe, else (False, reason).
+_BLOCK_REASON = "content not allowed for children"
 
-    Fails OPEN: if no Groq key is configured (dev/test) or the API errors, returns
-    (True, "") — the keyword filter in image_gen remains the backstop, so a Groq
-    outage degrades rather than blocking every image.
-    """
-    if config.MODERATION_BACKEND == "off" or not config.GROQ_API_KEY:
-        return True, ""  # disabled or no key -> skip LLM layer; keyword filter still applies
 
-    headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
+class ModerationUnavailable(Exception):
+    """Provider failure that should advance the fallback chain."""
+
+
+async def _chat(cfg: ProviderConfig, subject: str, client: httpx.AsyncClient) -> tuple[bool, str]:
     payload = {
-        "model": config.GROQ_LLM_MODEL,
+        "model": cfg.model,
         "temperature": 0,
         "max_tokens": 3,
         "messages": [
@@ -45,20 +50,88 @@ async def is_prompt_safe(subject: str, client: httpx.AsyncClient | None = None) 
             {"role": "user", "content": subject},
         ],
     }
-    owns_client = client is None
-    if owns_client:
+    resp = await client.post(_CHAT_URLS[cfg.provider],
+                             headers={"Authorization": f"Bearer {cfg.api_key}"},
+                             json=payload)
+    if resp.status_code // 100 != 2:
+        raise ModerationUnavailable(f"{cfg.provider} HTTP {resp.status_code}")
+    verdict = resp.json()["choices"][0]["message"]["content"].strip().upper()
+    if verdict.startswith("UNSAFE"):
+        return False, _BLOCK_REASON
+    return True, ""
+
+
+async def _openai_moderation(cfg: ProviderConfig, subject: str,
+                             client: httpx.AsyncClient) -> tuple[bool, str]:
+    resp = await client.post(_OPENAI_MODERATION_URL,
+                             headers={"Authorization": f"Bearer {cfg.api_key}"},
+                             json={"model": cfg.model or "omni-moderation-latest",
+                                   "input": subject})
+    if resp.status_code // 100 != 2:
+        raise ModerationUnavailable(f"openai_moderation HTTP {resp.status_code}")
+    flagged = bool(resp.json()["results"][0]["flagged"])
+    return (False, _BLOCK_REASON) if flagged else (True, "")
+
+
+ADAPTERS = {
+    "groq": _chat,
+    "openai": _chat,
+    "openrouter": _chat,
+    "openai_moderation": _openai_moderation,
+}
+
+
+async def check_with(cfg: ProviderConfig, subject: str,
+                     client: httpx.AsyncClient) -> tuple[bool, str]:
+    adapter = ADAPTERS.get(cfg.provider)
+    if adapter is None:
+        raise ModerationUnavailable(f"no adapter for provider {cfg.provider!r}")
+    try:
+        return await adapter(cfg, subject, client)
+    except ModerationUnavailable:
+        raise
+    except Exception as e:  # transport errors, bad JSON shape
+        raise ModerationUnavailable(f"{cfg.provider}: {e}") from e
+
+
+def _last_resort() -> ProviderConfig | None:
+    if not config.GROQ_API_KEY:
+        return None
+    return ProviderConfig("groq", config.GROQ_LLM_MODEL, "", config.GROQ_API_KEY)
+
+
+async def is_prompt_safe(subject: str, client: httpx.AsyncClient | None = None) -> tuple[bool, str]:
+    """Return (True, "") if the subject is child-safe, else (False, reason).
+
+    Chain: manager-api active provider -> env Groq last resort. FAILS OPEN if
+    every provider is unavailable (keyword filter remains the backstop)."""
+    if config.MODERATION_BACKEND == "off":
+        return True, ""
+
+    chain: list[ProviderConfig] = []
+    active = await manager_client.get_active_moderation(client=client)
+    if active is not None and active.api_key:
+        chain.append(active)
+    last = _last_resort()
+    if last is not None and (not chain or chain[0].provider != last.provider):
+        chain.append(last)  # depth <= 2
+    if not chain:
+        return True, ""  # no configured provider (dev/test) -> keyword filter only
+
+    owns = client is None
+    if owns:
         client = httpx.AsyncClient(timeout=10.0)
     try:
-        resp = await client.post(GROQ_CHAT_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        verdict = resp.json()["choices"][0]["message"]["content"].strip().upper()
-        if verdict.startswith("UNSAFE"):
-            logger.info("Moderation blocked subject: %r", subject)
-            return False, "content not allowed for children"
-        return True, ""
-    except Exception as e:
-        logger.warning("Moderation unavailable, failing open: %s", e)
+        for cfg in chain:
+            try:
+                verdict = await check_with(cfg, subject, client)
+                if not verdict[0]:
+                    logger.info("Moderation[%s] blocked subject: %r", cfg.provider, subject)
+                return verdict
+            except ModerationUnavailable as e:
+                logger.warning("Moderation provider %s unavailable: %s", cfg.provider, e)
+        logger.warning("All moderation providers unavailable; failing open")
         return True, ""
     finally:
-        if owns_client:
+        if owns:
             await client.aclose()
