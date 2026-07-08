@@ -114,3 +114,19 @@ async def test_chat_adapter_defaults_model_when_empty():
         safe, _ = await moderation.check_with(cfg, "a happy puppy", c)
     assert safe is True
     assert seen["model"] == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_variant_provider_routes_by_base_name():
+    seen = {}
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen["host"] = request.url.host
+        seen["model"] = _json.loads(request.content)["model"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "SAFE"}}]})
+    cfg = ProviderConfig("openrouter_gpt4o", "openai/gpt-4o-mini", "", "key123")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        safe, _ = await moderation.check_with(cfg, "a happy puppy", c)
+    assert safe is True
+    assert seen["host"] == "openrouter.ai"
+    assert seen["model"] == "openai/gpt-4o-mini"

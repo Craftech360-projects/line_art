@@ -89,6 +89,13 @@ ADAPTERS = {
 async def check_with(cfg: ProviderConfig, subject: str,
                      client: httpx.AsyncClient) -> tuple[bool, str]:
     adapter = ADAPTERS.get(cfg.provider)
+    if adapter is None and "_" in cfg.provider:
+        # Variant rows like "openrouter_gpt4o": route by base name before the
+        # first "_" so one vendor can appear with several models in the DB.
+        base = cfg.provider.split("_", 1)[0]
+        adapter = ADAPTERS.get(base)
+        if adapter is not None:
+            cfg = ProviderConfig(base, cfg.model, cfg.language, cfg.api_key)
     if adapter is None:
         raise ModerationUnavailable(f"no adapter for provider {cfg.provider!r}")
     try:
