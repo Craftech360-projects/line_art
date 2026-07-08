@@ -10,8 +10,7 @@ def _client(handler):
 
 @pytest.fixture(autouse=True)
 def _reset_cache_and_config(monkeypatch):
-    mc._cache["cfg"] = None
-    mc._cache["ts"] = 0.0
+    mc._cache.update({"data": None, "ts": 0.0})
     monkeypatch.setattr(config, "MANAGER_API_BASE_URL", "http://mgr")
     monkeypatch.setattr(config, "SERVICE_SECRET_KEY", "svc")
     monkeypatch.setattr(config, "STT_PROVIDER_TTL_S", 300.0)
@@ -62,3 +61,58 @@ async def test_serves_last_known_good_on_fetch_error():
 async def test_returns_none_when_no_base_url(monkeypatch):
     monkeypatch.setattr(config, "MANAGER_API_BASE_URL", "")
     assert await mc.get_active_stt(now=1000.0) is None
+
+
+@pytest.mark.asyncio
+async def test_moderation_block_is_parsed():
+    payload = {"data": {
+        "stt": {"provider": "groq", "model": "whisper-large-v3", "api_key": "sk1"},
+        "moderation": {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk2"},
+    }}
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+    async with _client(handler) as c:
+        cfg = await mc.get_active_moderation(client=c, now=1000.0)
+    assert cfg.provider == "openai"
+    assert cfg.model == "gpt-4o-mini"
+    assert cfg.api_key == "sk2"
+
+
+@pytest.mark.asyncio
+async def test_missing_moderation_block_returns_none():
+    payload = {"data": {"stt": {"provider": "groq", "api_key": "sk1"}}}
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+    async with _client(handler) as c:
+        assert await mc.get_active_moderation(client=c, now=1000.0) is None
+
+
+@pytest.mark.asyncio
+async def test_stt_and_moderation_share_one_fetch_and_cache():
+    calls = {"n": 0}
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json={"data": {
+            "stt": {"provider": "groq", "api_key": "sk1"},
+            "moderation": {"provider": "groq", "api_key": "sk1"},
+        }})
+    async with _client(handler) as c:
+        await mc.get_active_stt(client=c, now=1000.0)
+        await mc.get_active_moderation(client=c, now=1001.0)  # within TTL
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_failure_serves_last_known_good_moderation():
+    ok = {"data": {"moderation": {"provider": "groq", "api_key": "sk1"}}}
+    state = {"fail": False}
+    def handler(request: httpx.Request) -> httpx.Response:
+        if state["fail"]:
+            return httpx.Response(500)
+        return httpx.Response(200, json=ok)
+    async with _client(handler) as c:
+        first = await mc.get_active_moderation(client=c, now=1000.0)
+        state["fail"] = True
+        second = await mc.get_active_moderation(client=c, now=2000.0)  # past TTL
+    assert first.provider == "groq"
+    assert second is not None and second.provider == "groq"  # last-known-good
