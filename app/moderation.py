@@ -31,6 +31,11 @@ _CHAT_URLS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
 }
+_DEFAULT_CHAT_MODELS = {
+    "groq": "llama-3.1-8b-instant",
+    "openai": "gpt-4o-mini",
+    "openrouter": "google/gemma-3-4b-it",
+}
 _OPENAI_MODERATION_URL = "https://api.openai.com/v1/moderations"
 
 _BLOCK_REASON = "content not allowed for children"
@@ -42,7 +47,7 @@ class ModerationUnavailable(Exception):
 
 async def _chat(cfg: ProviderConfig, subject: str, client: httpx.AsyncClient) -> tuple[bool, str]:
     payload = {
-        "model": cfg.model,
+        "model": cfg.model or _DEFAULT_CHAT_MODELS[cfg.provider],
         "temperature": 0,
         "max_tokens": 3,
         "messages": [

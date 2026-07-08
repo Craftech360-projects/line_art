@@ -100,3 +100,17 @@ async def test_moderation_off_skips_everything(monkeypatch):
     monkeypatch.setattr(config, "MODERATION_BACKEND", "off")
     safe, _ = await moderation.is_prompt_safe("anything")
     assert safe is True
+
+
+@pytest.mark.asyncio
+async def test_chat_adapter_defaults_model_when_empty():
+    seen = {}
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen["model"] = _json.loads(request.content)["model"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "SAFE"}}]})
+    cfg = ProviderConfig("openai", "", "", "sk")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        safe, _ = await moderation.check_with(cfg, "a happy puppy", c)
+    assert safe is True
+    assert seen["model"] == "gpt-4o-mini"
