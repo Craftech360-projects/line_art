@@ -134,6 +134,16 @@ errors), the app falls back to `STT_LAST_RESORT_PROVIDER` (fixed in `.env`). See
 [`docs/adr/0002-stt-provider-selection-via-manager-api.md`](docs/adr/0002-stt-provider-selection-via-manager-api.md)
 for details.
 
+### Multi-provider moderation
+
+The child-safety moderation provider is resolved the same way as STT: manager-api's
+`GET /providers/active` now returns a `moderation` block (backed by the
+`moderation_providers` table — providers: `groq`, `openai`, `openrouter`,
+`openai_moderation`). The env-configured Groq judge (`GROQ_API_KEY` +
+`GROQ_LLM_MODEL`) is the fixed last resort, and the whole layer still fails open
+to the keyword filter if every provider is down. Switch the active provider with
+`PUT /livekit/providers/active/moderation {"provider": "openai", "model": "gpt-4o-mini", "api_key": "..."}`.
+
 The server also saves a copy of every generated image to `generated_images/`
 (both the full-colour FLUX PNG and the 1-bit mono PNG the device prints).
 
