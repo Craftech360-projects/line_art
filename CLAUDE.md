@@ -133,7 +133,7 @@ Cheeko device speaks MQTT (control) + UDP (Opus audio) to **mqtt-gateway**:
 | `app/stt.py` / `app/stt_providers.py` | STT dispatch + provider adapters |
 | `app/manager_client.py` | manager-api active-provider fetch + cache |
 | `app/opus_decode.py` | raw Opus → WAV via opuslib |
-| `app/image_gen.py` | FLUX call, 384px resize, 1-bit threshold, fallback image |
+| `app/image_gen.py` | image provider adapters (hf/runware/fal) + chain from manager-api, env HF last resort; FLUX prompt, 384px resize, 1-bit threshold, fallback image |
 | `app/comfy_client.py` / `comfy_workflow.py` | ComfyUI submit/poll/fetch + FLUX prompt graph |
 | `app/moderation.py` | pluggable moderation providers (groq/openai/openrouter/openai_moderation), active one from manager-api, Groq env last resort, fails open |
 | `ai_printer_client.py` / `ai_printer_gui.py` | CLI / Tkinter test clients (real Opus encoding) |

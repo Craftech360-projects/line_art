@@ -147,6 +147,17 @@ to the keyword filter if every provider is down. Switch the active provider with
 The server also saves a copy of every generated image to `generated_images/`
 (both the full-colour FLUX PNG and the 1-bit mono PNG the device prints).
 
+### Multi-provider image generation
+
+The image backend is resolved the same way: manager-api's `GET /providers/active`
+returns an `image` block (table `image_providers` — providers: `hf`, `runware`,
+`fal`; variant rows like `runware_schnell` route by base name). The env HF token
+(`HF_API_TOKEN`) is the fixed last resort, and `IMAGE_BACKEND=comfyui` still
+forces the local ComfyUI path. Generation failures fall through the chain; the
+imagine path still serves `IMAGINE_FALLBACK_IMAGE` if everything fails. Switch with
+`PUT /livekit/providers/active/image {"provider":"runware","model":"runware:400@4","api_key":"..."}`
+(or the non-clobbering `PUT /livekit/providers/image/:id/active`).
+
 ---
 
 ## Connecting the device
