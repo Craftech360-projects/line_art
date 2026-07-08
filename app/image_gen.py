@@ -5,6 +5,7 @@ import os
 import random
 import re
 import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -13,6 +14,8 @@ from PIL import Image, ImageOps
 from app import config
 from app import moderation
 from app import comfy_client
+from app import manager_client
+from app.stt_providers import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,105 @@ async def generate_with_huggingface(prompt: str, width: int | None = None,
         return resp.content
 
 
+RUNWARE_URL = "https://api.runware.ai/v1"
+
+
+class ImageGenUnavailable(Exception):
+    """Provider failure that should advance the image fallback chain."""
+
+
+async def _gen_hf(cfg, prompt, width=None, height=None, client=None):
+    model = cfg.model or ""
+    url = model if model.startswith("http") else (
+        f"https://router.huggingface.co/hf-inference/models/{model}" if model
+        else config.HF_MODEL_URL)
+    payload = {"inputs": prompt}
+    if width and height:
+        payload["parameters"] = {"width": width, "height": height}
+    resp = await client.post(url, headers={"Authorization": f"Bearer {cfg.api_key}"},
+                             json=payload)
+    if resp.status_code // 100 != 2:
+        raise ImageGenUnavailable(f"hf HTTP {resp.status_code}")
+    return resp.content
+
+
+async def _gen_runware(cfg, prompt, width=None, height=None, client=None):
+    task = {
+        "taskType": "imageInference",
+        "taskUUID": str(uuid.uuid4()),
+        "model": cfg.model or "runware:400@4",
+        "positivePrompt": prompt,
+        "width": width or 512,
+        "height": height or 512,
+        "steps": 4,
+        "numberResults": 1,
+        "outputType": "base64Data",
+        "outputFormat": "PNG",
+        "deliveryMethod": "sync",
+    }
+    resp = await client.post(RUNWARE_URL,
+                             headers={"Authorization": f"Bearer {cfg.api_key}"},
+                             json=[task])
+    if resp.status_code // 100 != 2:
+        raise ImageGenUnavailable(f"runware HTTP {resp.status_code}")
+    data = (resp.json().get("data") or [])
+    if not data or not data[0].get("imageBase64Data"):
+        raise ImageGenUnavailable(f"runware: no image in response ({resp.text[:200]})")
+    return base64.b64decode(data[0]["imageBase64Data"])
+
+
+async def _gen_fal(cfg, prompt, width=None, height=None, client=None):
+    path = cfg.model or "fal-ai/flux/schnell"
+    body = {"prompt": prompt}
+    if width and height:
+        body["image_size"] = {"width": width, "height": height}
+    resp = await client.post(f"https://fal.run/{path}",
+                             headers={"Authorization": f"Key {cfg.api_key}"},
+                             json=body)
+    if resp.status_code // 100 != 2:
+        raise ImageGenUnavailable(f"fal HTTP {resp.status_code}")
+    images = resp.json().get("images") or []
+    if not images or not images[0].get("url"):
+        raise ImageGenUnavailable("fal: no image url in response")
+    img = await client.get(images[0]["url"])
+    if img.status_code // 100 != 2:
+        raise ImageGenUnavailable(f"fal image download HTTP {img.status_code}")
+    return img.content
+
+
+IMAGE_ADAPTERS = {"hf": _gen_hf, "runware": _gen_runware, "fal": _gen_fal}
+
+
+async def generate_image_with(cfg: ProviderConfig, prompt: str,
+                              width=None, height=None, client=None) -> bytes:
+    adapter = IMAGE_ADAPTERS.get(cfg.provider)
+    if adapter is None and "_" in cfg.provider:
+        base = cfg.provider.split("_", 1)[0]
+        adapter = IMAGE_ADAPTERS.get(base)
+        if adapter is not None:
+            cfg = ProviderConfig(base, cfg.model, cfg.language, cfg.api_key)
+    if adapter is None:
+        raise ImageGenUnavailable(f"no adapter for image provider {cfg.provider!r}")
+    owns = client is None
+    if owns:
+        client = httpx.AsyncClient(timeout=120.0)
+    try:
+        return await adapter(cfg, prompt, width=width, height=height, client=client)
+    except ImageGenUnavailable:
+        raise
+    except Exception as e:  # transport errors, bad JSON shape
+        raise ImageGenUnavailable(f"{cfg.provider}: {e}") from e
+    finally:
+        if owns:
+            await client.aclose()
+
+
+def _image_last_resort() -> ProviderConfig | None:
+    if not config.HF_API_TOKEN:
+        return None
+    return ProviderConfig("hf", "", "", config.HF_API_TOKEN)  # model "" -> config.HF_MODEL_URL
+
+
 def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
     """Convert image to 384px wide 1-bit monochrome raw bitmap.
 
@@ -122,18 +224,35 @@ def to_raw_mono(image_bytes: bytes) -> tuple[bytes, bytes]:
 
 async def _generate_image_bytes(prompt: str, width: int | None = None,
                                 height: int | None = None) -> bytes:
-    """Generate raw image bytes via the configured backend: cloud HF FLUX or local ComfyUI.
-
-    Switched by config.IMAGE_BACKEND ("hf" | "comfyui"). Used by both the printer
-    (line_art) path and the imagine path, so one flag flips both features.
-    """
+    """Generate raw image bytes: local ComfyUI override, else the provider chain
+    (manager-api active image provider -> env HF last resort)."""
     if config.IMAGE_BACKEND == "comfyui":
         return await comfy_client.generate_png(
             prompt, width=width or 768, height=height or 768,
             timeout_s=config.COMFYUI_TIMEOUT_S)
-    if width and height:
-        return await generate_with_huggingface(prompt, width=width, height=height)
-    return await generate_with_huggingface(prompt)
+
+    chain: list[ProviderConfig] = []
+    active = await manager_client.get_active_image()
+    if active is not None and active.api_key:
+        chain.append(active)
+    last = _image_last_resort()
+    if last is not None and (not chain or chain[0].provider != last.provider):
+        chain.append(last)  # depth <= 2
+    if not chain:
+        # No manager row with a key and no env token: legacy direct HF call
+        # (works for public models without auth).
+        if width and height:
+            return await generate_with_huggingface(prompt, width=width, height=height)
+        return await generate_with_huggingface(prompt)
+
+    last_exc: Exception | None = None
+    for cfg in chain:
+        try:
+            return await generate_image_with(cfg, prompt, width=width, height=height)
+        except ImageGenUnavailable as e:
+            last_exc = e
+            logger.warning("Image provider %s unavailable: %s", cfg.provider, e)
+    raise RuntimeError(f"All image providers failed: {last_exc}")
 
 
 async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
