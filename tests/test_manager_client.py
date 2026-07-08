@@ -116,3 +116,22 @@ async def test_fetch_failure_serves_last_known_good_moderation():
         second = await mc.get_active_moderation(client=c, now=2000.0)  # past TTL
     assert first.provider == "groq"
     assert second is not None and second.provider == "groq"  # last-known-good
+
+
+@pytest.mark.asyncio
+async def test_malformed_200_does_not_clobber_last_known_good():
+    ok = {"data": {"stt": {"provider": "groq", "api_key": "sk1"},
+                   "moderation": {"provider": "groq", "api_key": "sk1"}}}
+    state = {"garbage": False}
+    def handler(request: httpx.Request) -> httpx.Response:
+        if state["garbage"]:
+            return httpx.Response(200, json={"data": {}})
+        return httpx.Response(200, json=ok)
+    async with _client(handler) as c:
+        first = await mc.get_active_stt(client=c, now=1000.0)
+        state["garbage"] = True
+        stt = await mc.get_active_stt(client=c, now=2000.0)      # past TTL
+        mod = await mc.get_active_moderation(client=c, now=2000.0)
+    assert first.provider == "groq"
+    assert stt is not None and stt.provider == "groq"    # last-known-good preserved
+    assert mod is not None and mod.provider == "groq"

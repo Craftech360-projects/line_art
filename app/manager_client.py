@@ -54,9 +54,13 @@ async def _get_active(kind: str, client: httpx.AsyncClient | None,
         client = httpx.AsyncClient(timeout=10.0)
     try:
         data = await _fetch(client)
-        _cache["data"] = data
-        _cache["ts"] = now
-        return data.get(kind)
+        if any(data.values()):
+            _cache["data"] = data
+            _cache["ts"] = now
+            return data.get(kind)
+        # 200 but no valid provider blocks (malformed body) — keep last-known-good
+        cached = _cache["data"] or {}
+        return cached.get(kind)
     except Exception as e:  # network, 5xx, parse — serve last-known-good
         cached = _cache["data"] or {}
         logger.warning("manager-api active-provider fetch failed (%s); using cache=%s",
