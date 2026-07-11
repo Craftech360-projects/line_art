@@ -45,6 +45,101 @@ async def test_groq_adapter_429_is_hard_failure():
 
 
 @pytest.mark.asyncio
+async def test_groq_adapter_sends_language_when_set():
+    """Without an explicit language Whisper auto-detects, and mis-detects short
+    English clips as Hindi (transcribing them as Devanagari hallucinations)."""
+    cfg = ProviderConfig(provider="groq", model="m", language="en", api_key="k")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b'name="language"' in request.content
+        assert b"en" in request.content
+        return httpx.Response(200, json={"text": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
+async def test_groq_adapter_omits_language_when_empty():
+    """Empty language => omit the field entirely, restoring auto-detect."""
+    cfg = ProviderConfig(provider="groq", model="m", language="", api_key="k")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b'name="language"' not in request.content
+        return httpx.Response(200, json={"text": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
+async def test_speaches_adapter_sends_language_when_set():
+    cfg = ProviderConfig(provider="speaches", model="m", language="en",
+                         api_key="http://localhost:8001")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b'name="language"' in request.content
+        return httpx.Response(200, json={"text": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
+async def test_sarvam_default_model_is_not_deprecated():
+    """saarika:v2 is retired; defaulting to it 4xxs every call and silently
+    demotes Sarvam to the fallback chain."""
+    cfg = ProviderConfig(provider="sarvam", model="", language="en", api_key="sk")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b"saarika:v2.5" in request.content
+        return httpx.Response(200, json={"transcript": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
+async def test_sarvam_maps_iso_language_to_bcp47():
+    """Sarvam wants BCP-47 with an Indian region (en-IN); a bare ISO-639-1 'en'
+    is rejected, which would demote Sarvam to a hard failure on every call."""
+    cfg = ProviderConfig(provider="sarvam", model="saarika:v2", language="en", api_key="sk")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b"en-IN" in request.content
+        return httpx.Response(200, json={"transcript": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
+async def test_sarvam_passes_through_regioned_code():
+    cfg = ProviderConfig(provider="sarvam", model="saarika:v2", language="hi-IN", api_key="sk")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b"hi-IN" in request.content
+        return httpx.Response(200, json={"transcript": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
+async def test_sarvam_unsupported_language_falls_back_to_unknown():
+    """A language Sarvam can't serve must auto-detect, not 400 the request."""
+    cfg = ProviderConfig(provider="sarvam", model="saarika:v2", language="fr", api_key="sk")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b"unknown" in request.content
+        assert b"fr-IN" not in request.content
+        return httpx.Response(200, json={"transcript": "a cat"})
+
+    async with _client(handler) as c:
+        assert await sp.transcribe_with(cfg, b"wav", c) == "a cat"
+
+
+@pytest.mark.asyncio
 async def test_connect_error_is_hard_failure():
     cfg = ProviderConfig(provider="groq", model="m", language="", api_key="k")
 

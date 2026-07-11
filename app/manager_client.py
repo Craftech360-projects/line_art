@@ -21,7 +21,9 @@ def _parse(body: dict) -> ProviderConfig | None:
     return ProviderConfig(
         provider=str(stt["provider"]).lower(),
         model=stt.get("model") or "",
-        language=stt.get("language") or "",
+        # No language from manager-api => pin STT_LANGUAGE rather than letting the
+        # provider auto-detect, which mis-reads short English clips as Hindi.
+        language=stt.get("language") or config.STT_LANGUAGE,
         api_key=stt.get("api_key") or "",
     )
 

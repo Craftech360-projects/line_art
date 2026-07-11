@@ -42,12 +42,15 @@ async def _with_client(client, coro_factory):
 
 
 async def _groq(cfg: ProviderConfig, audio: bytes, client=None) -> str:
+    data = {"model": cfg.model or "whisper-large-v3", "response_format": "json"}
+    if cfg.language:
+        data["language"] = cfg.language
     async def call(c: httpx.AsyncClient) -> str:
         resp = await c.post(
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {cfg.api_key}"},
             files={"file": ("audio.wav", audio, "audio/wav")},
-            data={"model": cfg.model or "whisper-large-v3", "response_format": "json"},
+            data=data,
         )
         _check(resp)
         return resp.json().get("text", "").strip()
@@ -57,11 +60,14 @@ async def _groq(cfg: ProviderConfig, audio: bytes, client=None) -> str:
 async def _speaches(cfg: ProviderConfig, audio: bytes, client=None) -> str:
     # cfg.api_key holds the Speaches base URL for the local dev path.
     base = cfg.api_key or "http://localhost:8001"
+    data = {"model": cfg.model, "response_format": "json"}
+    if cfg.language:
+        data["language"] = cfg.language
     async def call(c: httpx.AsyncClient) -> str:
         resp = await c.post(
             f"{base}/v1/audio/transcriptions",
             files={"file": ("audio.wav", audio, "audio/wav")},
-            data={"model": cfg.model, "response_format": "json"},
+            data=data,
         )
         _check(resp)
         return resp.json().get("text", "").strip()
@@ -87,15 +93,31 @@ async def _deepgram(cfg: ProviderConfig, audio: bytes, client=None) -> str:
     return await _with_client(client, call)
 
 
+# Sarvam speaks BCP-47 with an Indian region (en-IN), not ISO-639-1 (en), and
+# rejects anything outside this set — so an unmapped code would turn every Sarvam
+# call into a hard failure. Unsupported languages fall back to auto-detect.
+_SARVAM_LANGS = {"hi", "bn", "kn", "ml", "mr", "od", "pa", "ta", "te", "en", "gu"}
+
+
+def _sarvam_language_code(language: str) -> str:
+    if not language:
+        return "unknown"
+    if "-" in language:  # already regioned, e.g. "en-IN"
+        return language
+    base = language.lower()
+    return f"{base}-IN" if base in _SARVAM_LANGS else "unknown"
+
+
 async def _sarvam(cfg: ProviderConfig, audio: bytes, client=None) -> str:
-    model = cfg.model or "saarika:v2"
+    # saarika:v1/v2/flash are retired; v2.5 is the current transcribe model.
+    model = cfg.model or "saarika:v2.5"
     files = {"file": ("audio.wav", audio, "audio/wav")}
     data = {"model": model}
     if model.startswith("saaras"):
         url = "https://api.sarvam.ai/speech-to-text-translate"
     else:
         url = "https://api.sarvam.ai/speech-to-text"
-        data["language_code"] = cfg.language or "unknown"
+        data["language_code"] = _sarvam_language_code(cfg.language)
     async def call(c: httpx.AsyncClient) -> str:
         resp = await c.post(url, headers={"api-subscription-key": cfg.api_key},
                             files=files, data=data)
