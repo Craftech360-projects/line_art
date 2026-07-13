@@ -42,9 +42,16 @@ SERVICE_SECRET_KEY = os.environ.get("SERVICE_SECRET_KEY", "")
 STT_PROVIDER_TTL_S = float(os.environ.get("STT_PROVIDER_TTL_S", "300"))
 # Fixed env last-resort provider used when the active provider can't serve.
 STT_LAST_RESORT_PROVIDER = os.environ.get("STT_LAST_RESORT_PROVIDER", "groq").lower()
+# ISO-639-1 code pinned on every STT request. Whisper otherwise auto-detects per
+# utterance and mis-reads short English clips as Hindi, returning Devanagari
+# hallucinations. Set to "" to restore auto-detect (multi-language deployments).
+STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "en").strip()
 # Extra keys so deepgram/sarvam can be the last-resort or used in dev.
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
+# saarika:v1/v2/flash are retired. v2.5 transcribes in the spoken language;
+# saaras:v3 is the current model but routes to the translate endpoint here.
+SARVAM_MODEL = os.environ.get("SARVAM_MODEL", "saarika:v2.5")
 
 # Save every generated image to generated_images/ (children's data — default OFF in prod).
 SAVE_GENERATED_IMAGES = os.environ.get("SAVE_GENERATED_IMAGES", "").lower() in ("1", "true", "yes")

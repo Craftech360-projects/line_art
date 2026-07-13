@@ -15,21 +15,30 @@ logger = logging.getLogger(__name__)
 _cache = {"data": None, "ts": 0.0}  # data: {"stt": cfg|None, "moderation": cfg|None}
 
 
-def _block(d: dict, key: str) -> ProviderConfig | None:
+def _block(d: dict, key: str, kind: str = None) -> ProviderConfig | None:
     blk = d.get(key)
     if not blk or not blk.get("provider"):
         return None
+    # No language from manager-api => pin STT_LANGUAGE rather than letting the
+    # provider auto-detect, which mis-reads short English clips as Hindi.
+    language = blk.get("language") or ""
+    if kind == "stt" and not language:
+        language = config.STT_LANGUAGE
     return ProviderConfig(
         provider=str(blk["provider"]).lower(),
         model=blk.get("model") or "",
-        language=blk.get("language") or "",
+        language=language,
         api_key=blk.get("api_key") or "",
     )
 
 
 def _parse(body: dict) -> dict:
     d = body.get("data") or body
-    return {"stt": _block(d, "stt"), "moderation": _block(d, "moderation"), "image": _block(d, "image")}
+    return {
+        "stt": _block(d, "stt", "stt"),
+        "moderation": _block(d, "moderation", "moderation"),
+        "image": _block(d, "image", "image"),
+    }
 
 
 async def _fetch(client: httpx.AsyncClient) -> dict:
