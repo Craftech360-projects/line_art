@@ -75,3 +75,53 @@ Final whole-branch review (opus): READY-WITH-MINORS -> 3 fix-now items FIXED in 
   chain dedup is name-only (bad manager key for last-resort provider has no net — intended per spec).
 Controller fix: pre-existing flaky test test_command_prefix_is_stripped_from_subject pinned (commit follows 59a194b). Suite stable 81/81 across repeated runs.
 BRANCH feat/prod-readiness MERGE-READY: 620e594(docs)..HEAD.
+
+---
+
+# Moderation Provider Selection — SDD progress
+
+Plan: docs/superpowers/plans/2026-07-08-moderation-provider-selection.md
+Branches: line_art feat/moderation-providers (base 2603794); cheeko-backend lineart_moderation (base 2c331798)
+
+Task 1: complete (commits 2c331798..3bcebf25, review clean — SPEC ✅, QUALITY approved)
+  ⚠️ resolved by controller: live DB verified fail-loud (4 rows, groq active) via DIRECT_URL env form; prisma generate v7.4.2 per report, conclusively exercised at Task 5 live check.
+Task 2: complete (commits 3bcebf25..da7e3810, review clean — SPEC ✅, QUALITY approved; 7/7 jest)
+  ⚠️ resolved by controller: unique provider_name + schema shape confirmed in Task 1 review (byte-for-byte clone of stt_providers minus audio fields).
+  Minor (defer to final review): inline update mock in test 4 (style); no test for activateProvider type=moderation (matches brief scope).
+  Note: implementer minimally patched existing livekitProviders.service.test.js mock (6 insertions, 0 deletions) — legitimate consequence, reviewed.
+Task 3: complete (commits 2603794..ae58495, review clean after 1 fix loop — SPEC ✅, QUALITY approved; 86/86)
+  Fix: plan-mandated cache regression (malformed 200 clobbered last-known-good) fixed in ae58495 with red/green covering test; controller resolved plan-vs-constraint conflict in favor of the Global Constraint (get_active_stt unchanged) without user interrupt.
+  Minor (defer to final review): partial-response (valid moderation, missing stt) overwrites cached stt with None — defensible "stt disabled" reading; untested either way.
+Task 4: complete (commits ae58495..56c20d7, review clean — SPEC ✅, QUALITY approved; 95/95)
+  Minor (defer to final review): transport-error wrapping branch in check_with untested (plan-mandated gap); _last_resort hardcodes groq (per spec).
+Task 5 (docs): complete (commit 271d0b1)
+Final whole-branch review (fable): READY WITH FIXES -> 2 Important FIXED in 1713d5c (default chat models on empty model + honest moderation startup log; 96/96).
+Deferred minors all ACCEPTED by final reviewer (inline mock style; no activateProvider moderation test; partial-response stt None; transport-error branch untested; groq hardcoded last resort).
+AWAITING USER: fill api_key in moderation_providers (Task 5 Step 3), then live verification (Step 4).
+Commits: line_art 2603794..1713d5c (5), manager-api 2c331798..da7e3810 (2).
+Task 5: COMPLETE. Live verification (2026-07-08): /providers/active serves moderation block; all 4 providers PASS adapter-level (safe->SAFE, unsafe->BLOCKED against real vendor APIs); full is_prompt_safe chain verified per provider via generic activate route (Moderation[<provider>] log confirms source); groq restored active.
+NOTE for deploy: line_art .env has MODERATION_BACKEND=off — must be removed/set to groq in production or the layer stays disabled.
+ALL 5 TASKS COMPLETE. line_art feat/moderation-providers 2603794..1713d5c; manager-api lineart_moderation 2c331798..da7e3810. MERGE-READY.
+
+---
+
+# Image Provider Selection — SDD progress
+
+Plan: docs/superpowers/plans/2026-07-08-image-provider-selection.md
+Branches: line_art feat/moderation-providers; cheeko-backend lineart_moderation (base da7e3810)
+
+IMG Task 1: complete (commits da7e3810..70e0fbae, review clean — SPEC ✅, QUALITY approved, no findings)
+  ⚠️ resolved by controller: live DB re-verified fail-loud (3 rows, hf active).
+IMG Task 2: complete (commits 70e0fbae..54587dab, review clean — SPEC ✅, QUALITY approved; 296 unit tests)
+  Minor (defer to final review): inline update mock in test 4 (mirrors moderation test style).
+IMG Task 3: complete (commits 85e4746..7be34bd, review clean — SPEC ✅, QUALITY approved; 99/99 verified by controller)
+  Minor (defer to final review): manager_client docstring/cache comment now name only stt+moderation (image is third key).
+IMG Task 4: complete (commits 7be34bd..e1c61aa, review clean after 1 fix loop — SPEC ✅, QUALITY approved; 106/106 x2)
+  Fix: full-suite test pollution — app.main import-time load_dotenv leaked real HF/manager keys, chain made LIVE HF calls in tests; conftest autouse fixture neutralizes HF_API_TOKEN + MANAGER_API_BASE_URL (e1c61aa). Implementer had only run focused tests; controller caught it on independent full-suite run.
+  Minor (defer to final review): variant-routing block duplicated across moderation.py/image_gen.py (extraction candidate later).
+IMG Task 5 (docs): complete (6ed7418). Final whole-branch review (fable): READY WITH FIXES -> 2 Important FIXED in 9b9ca5a (75s chain deadline IMAGE_CHAIN_DEADLINE_S + honest image-gen startup log; 107/107).
+Deferred minors all ACCEPTED (inline mock style; stale manager_client docstring; variant-routing duplication = rule-of-three, extract next provider kind; last-resort empty-model documented).
+AWAITING USER: fill api_key in image_providers (runware/fal), then live verification.
+Commits: line_art ..9b9ca5a; manager-api ..54587dab.
+IMG Task 5: COMPLETE. Live verification (2026-07-08): image block served; hf PASS (1.8s); runware PASS (3.7s, real klein 4B 512x384 PNG); imagine path via runware PASS (7.1s e2e JPEG); fal FAILED HTTP 403 = "Exhausted balance" (valid key, no credits) — chain correctly fell back to HF, device unaffected. hf restored active.
+ALL IMG TASKS COMPLETE. Both features MERGE-READY: line_art feat/moderation-providers 2603794..9b9ca5a; manager-api lineart_moderation 2c331798..54587dab.
