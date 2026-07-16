@@ -257,7 +257,10 @@ async def _generate_image_bytes(prompt: str, width: int | None = None,
         nonlocal last_exc
         for cfg in chain:
             try:
-                return await generate_image_with(cfg, prompt, width=width, height=height)
+                data = await generate_image_with(cfg, prompt, width=width, height=height)
+                logger.info("[image] served by %s (model %s)",
+                            cfg.provider, cfg.model or "<env default>")
+                return data
             except ImageGenUnavailable as e:
                 last_exc = e
                 logger.warning("Image provider %s unavailable: %s", cfg.provider, e)
@@ -429,8 +432,8 @@ async def generate_imagine_jpeg(subject: str) -> tuple[bytes, str]:
     t0 = time.time()
     try:
         image_bytes = await _generate_image_bytes(prompt, width=512, height=384)
-        logger.info("[imagine] backend=%s returned %d bytes in %.1fs",
-                    config.IMAGE_BACKEND, len(image_bytes), time.time() - t0)
+        logger.info("[imagine] image returned: %d bytes in %.1fs",
+                    len(image_bytes), time.time() - t0)
     except Exception as e:
         # Generation backend failed (e.g. ComfyUI/HF unreachable). Serve the fallback
         # image so the device still shows something. (Safety blocks are raised above and
