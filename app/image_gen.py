@@ -252,18 +252,23 @@ async def _generate_image_bytes(prompt: str, width: int | None = None,
         return await generate_with_huggingface(prompt)
 
     last_exc: Exception | None = None
+
+    async def _walk_chain() -> bytes:
+        nonlocal last_exc
+        for cfg in chain:
+            try:
+                return await generate_image_with(cfg, prompt, width=width, height=height)
+            except ImageGenUnavailable as e:
+                last_exc = e
+                logger.warning("Image provider %s unavailable: %s", cfg.provider, e)
+        raise RuntimeError(f"All image providers failed: {last_exc}")
+
+    # wait_for, not asyncio.timeout: the deploy target runs Python 3.10.
     try:
-        async with asyncio.timeout(IMAGE_CHAIN_DEADLINE_S):
-            for cfg in chain:
-                try:
-                    return await generate_image_with(cfg, prompt, width=width, height=height)
-                except ImageGenUnavailable as e:
-                    last_exc = e
-                    logger.warning("Image provider %s unavailable: %s", cfg.provider, e)
-    except TimeoutError:
+        return await asyncio.wait_for(_walk_chain(), IMAGE_CHAIN_DEADLINE_S)
+    except asyncio.TimeoutError:
         raise RuntimeError(
             f"Image chain deadline ({IMAGE_CHAIN_DEADLINE_S:.0f}s) exceeded; last error: {last_exc}")
-    raise RuntimeError(f"All image providers failed: {last_exc}")
 
 
 async def generate_line_art(subject: str) -> tuple[str, str, str, int]:
